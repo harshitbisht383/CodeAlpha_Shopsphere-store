@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Shop quality electronics, fashion and everyday essentials at ShopSphere.">
+    <title>ShopSphere | Online Shopping</title>
+    <link rel="stylesheet" href="./style.css">
+    <script src="./script.js" defer></script>
+</head>
+<body>
+    <header class="header">
+        <div class="header-main">
+            <div class="container navbar">
+                <a class="logo" href="#home" onclick="showSection('home')" aria-label="ShopSphere home">
+                    Shop<span>Sphere</span>
+                </a>
+                <a class="delivery-link" href="#products">
+                    <span class="delivery-icon" aria-hidden="true">⌖</span>
+                    <span><small>Deliver to</small><strong>Your location</strong></span>
+                </a>
+                <form class="market-search" role="search">
+                    <label class="visually-hidden" for="searchInput">Search ShopSphere</label>
+                    <input type="search" id="searchInput" placeholder="Search ShopSphere" autocomplete="off">
+                    <button type="submit" aria-label="Search">⌕</button>
+                </form>
+                <div class="nav-actions">
+                    <button type="button" id="loginAction" onclick="showSection('login')"><small>Hello, sign in</small><strong>Account</strong></button>
+                    <button type="button" id="registerAction" onclick="showSection('register')"><small>New here?</small><strong>Register</strong></button>
+                    <a class="orders-link" href="#products"><small>Explore</small><strong>Products</strong></a>
+                    <button class="cart-action" type="button" onclick="showSection('cart')" aria-label="Open cart">
+                        <span class="cart-icon" aria-hidden="true">🛒</span>
+                        <span class="cart-badge" id="cartCount">0</span>
+                        <strong>Cart</strong>
+                    </button>
+                </div>
+            </div>
+        </div>
+        <nav class="store-nav" aria-label="Store categories">
+            <div class="container store-nav-inner">
+                <a href="#products" onclick="showSection('home')">☰ <strong>All</strong></a>
+                <a href="#products" data-category-link="electronics">Electronics</a>
+                <a href="#products" data-category-link="fashion">Fashion</a>
+                <a href="#products" data-category-link="home">Home &amp; Living</a>
+                <a href="#products" data-category-link="accessories">Accessories</a>
+                <a href="#products" data-category-link="shoes">Shoes</a>
+                <span class="store-nav-promo">Everyday finds, delivered with care</span>
+            </div>
+        </nav>
+    </header>
+
+    <main id="home">
+        <section class="hero">
+            <div class="container hero-content">
+                <div>
+                    <p class="eyebrow">THE EVERYDAY SHOPPING EVENT</p>
+                    <h1>Big finds for<br>every kind of day.</h1>
+                    <p>Discover customer favorites across tech, style and home.</p>
+                    <a class="btn" href="#products">Shop today's picks</a>
+                </div>
+                <div class="hero-image-placeholder" aria-label="Featured shopping picks">
+                    <span aria-hidden="true">✨</span>
+                    <h2>Fresh picks, feel-good prices</h2>
+                    <p>Explore something new today</p>
+                </div>
+            </div>
+        </section>
+
+        <section class="container category-shortcuts" aria-label="Shop popular departments">
+            <a href="#products" data-category-link="electronics"><span>🎧</span><strong>Electronics</strong></a>
+            <a href="#products" data-category-link="fashion"><span>👕</span><strong>Fashion</strong></a>
+            <a href="#products" data-category-link="home"><span>🏡</span><strong>Home picks</strong></a>
+            <a href="#products" data-category-link="accessories"><span>🎒</span><strong>Accessories</strong></a>
+            <a href="#products" data-category-link="shoes"><span>👟</span><strong>Shoes</strong></a>
+        </section>
+
+        <section class="container search-section" aria-label="Product filters">
+            <div class="search-controls">
+                <select id="categoryFilter" aria-label="Filter by category">
+                    <option value="all">All categories</option>
+                    <option value="electronics">Electronics</option>
+                    <option value="fashion">Fashion</option>
+                    <option value="home">Home &amp; Living</option>
+                    <option value="accessories">Accessories</option>
+                    <option value="shoes">Shoes</option>
+                </select>
+                <select id="sortFilter" aria-label="Sort products">
+                    <option value="default">Sort by</option>
+                    <option value="low">Price: low to high</option>
+                    <option value="high">Price: high to low</option>
+                </select>
+            </div>
+        </section>
+
+        <section id="products" class="container products-section" aria-labelledby="products-heading">
+            <div class="products-heading">
+                <div>
+                    <p class="eyebrow">HANDPICKED FOR YOU</p>
+                    <h2 id="products-heading">Popular right now</h2>
+                </div>
+                <span class="results-note" id="productCount">50 products · Great finds, everyday value</span>
+            </div>
+            <div class="product-grid" id="productGrid">
+                <p class="products-loading" role="status">Loading products...</p>
+            </div>
+            <p id="cartFeedback" class="message success" aria-live="polite" hidden></p>
+            <p id="noProductsMessage" hidden>No products found. Try another search.</p>
+        </section>
+
+        <section id="cart" class="container page-section" style="display: none;">
+            <h1>Your shopping cart</h1>
+            <div id="cartItems"></div>
+            <div class="cart-summary">
+                <h2>Total: ₹<span id="cartTotal">0</span></h2>
+                <button class="btn" type="button" onclick="goToCheckout()">Proceed to checkout</button>
+                <button class="btn" type="button" onclick="clearCart()">Clear cart</button>
+                <button class="btn" type="button" onclick="showSection('home')">Continue shopping</button>
+            </div>
+        </section>
+
+        <section id="checkout" class="container page-section" style="display: none;">
+            <h1>Checkout</h1>
+            <div class="checkout-summary">
+                <h2>Order total: ₹<span id="checkoutTotal">0</span></h2>
+            </div>
+            <form id="checkoutForm">
+                <label for="customerName">Full name</label>
+                <input id="customerName" name="name" autocomplete="name" required>
+                <label for="customerEmail">Email address</label>
+                <input id="customerEmail" name="email" type="email" autocomplete="email" required>
+                <label for="customerAddress">Delivery address</label>
+                <textarea id="customerAddress" name="address" autocomplete="street-address" rows="4" required></textarea>
+                <button type="button" id="useCurrentLocation" class="location-button">
+                    Use my current location
+                </button>
+                <p id="locationStatus" class="location-status" role="status" aria-live="polite">
+                    Optional: allow browser location access to fill in your current GPS coordinates. Selected coordinates are sent with your order when you submit checkout.
+                </p>
+                <button type="submit">Place order</button>
+                <p id="orderMessage" class="message info" aria-live="polite"></p>
+            </form>
+        </section>
+
+        <section id="login" class="container page-section" style="display: none;">
+            <h1>Login</h1>
+            <form id="loginForm">
+                <label for="loginUsername">Username</label>
+                <input id="loginUsername" name="username" autocomplete="username" required>
+                <label for="loginPassword">Password</label>
+                <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
+                <button type="submit">Login</button>
+                <p id="loginMessage" class="message info" aria-live="polite"></p>
+            </form>
+        </section>
+
+        <section id="register" class="container page-section" style="display: none;">
+            <h1>Create your account</h1>
+            <p class="account-note">Create an account to save your cart and view your orders.</p>
+            <form id="registerForm">
+                <label for="registerUsername">Username</label>
+                <input id="registerUsername" name="username" autocomplete="username" required>
+                <label for="registerEmail">Email address</label>
+                <input id="registerEmail" name="email" type="email" autocomplete="email" required>
+                <label for="registerPassword">Password</label>
+                <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" required>
+                <label for="confirmPassword">Confirm password</label>
+                <input id="confirmPassword" name="confirmPassword" type="password" autocomplete="new-password" minlength="8" required>
+                <button type="submit">Create account</button>
+                <p id="registerMessage" class="message info" aria-live="polite"></p>
+            </form>
+            <p class="account-switch">Already registered? <button type="button" class="text-button" onclick="showSection('login')">Sign in</button></p>
+        </section>
+    </main>
+
+    <footer class="footer">
+        <div class="container">
+            <h2>ShopSphere</h2>
+            <p>Your everyday destination for discovering products you love.</p>
+            <div class="footer-links">
+                <a href="#home">Home</a>
+                <a href="#products">Products</a>
+                <a href="#cart" onclick="showSection('cart')">Cart</a>
+            </div>
+            <p>&copy; 2026 ShopSphere. Demo storefront with server-saved accounts, carts and orders.</p>
+        </div>
+    </footer>
+</body>
+</html>
