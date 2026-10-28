@@ -628,6 +628,7 @@ button:disabled {
 ========================================= */
 
 #checkoutForm,
+#otpLoginForm,
 #loginForm,
 #registerForm,
 #sellerProductForm {
@@ -649,6 +650,7 @@ button:disabled {
 }
 
 #checkoutForm label,
+#otpLoginForm label,
 #loginForm label,
 #registerForm label,
 #sellerProductForm label {
@@ -661,6 +663,7 @@ button:disabled {
 #checkoutForm input,
 #checkoutForm select,
 #checkoutForm textarea,
+#otpLoginForm input,
 #loginForm input,
 #registerForm input,
 #sellerProductForm input,
@@ -680,6 +683,7 @@ button:disabled {
 #checkoutForm input:focus,
 #checkoutForm select:focus,
 #checkoutForm textarea:focus,
+#otpLoginForm input:focus,
 #loginForm input:focus,
 #registerForm input:focus,
 #sellerProductForm input:focus,
@@ -696,6 +700,7 @@ button:disabled {
 }
 
 #checkoutForm button,
+#otpLoginForm button,
 #loginForm button,
 #registerForm button,
 #sellerProductForm button {
@@ -1000,6 +1005,7 @@ button:disabled {
     }
 
     #checkoutForm,
+    #otpLoginForm,
     #loginForm,
     #registerForm,
     #sellerProductForm {
@@ -1134,6 +1140,28 @@ button:disabled {
 .auth-locked #login h1,
 .auth-locked #register h1 {
     margin-bottom: 12px;
+}
+
+.otp-secondary-button {
+    background: var(--white);
+    color: var(--primary);
+    border: 1px solid var(--primary);
+}
+
+.password-login {
+    width: min(100%, 600px);
+    margin-top: 20px;
+}
+
+.password-login summary {
+    width: fit-content;
+    color: var(--primary);
+    font-weight: 700;
+    cursor: pointer;
+}
+
+.password-login #loginForm {
+    margin-top: 14px;
 }
 
 .market-search button {

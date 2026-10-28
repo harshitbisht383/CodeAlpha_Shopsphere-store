@@ -29,6 +29,8 @@ let currentUser = null;
 let currentGpsPosition = null;
 let pendingBuyProductId = null;
 let pendingCheckout = false;
+let otpCountdownInterval = null;
+let otpExpiresAt = 0;
 
 async function apiRequest(path, options = {}) {
     const headers = new Headers(options.headers || {});
@@ -62,7 +64,9 @@ async function apiRequest(path, options = {}) {
         if (response.status === 400 && result.error?.includes("session expired")) {
             window.location.reload();
         }
-        throw new Error(result.error || "The request failed. Please try again.");
+        const apiError = new Error(result.error || "The request failed. Please try again.");
+        apiError.retryAfter = result.retryAfter;
+        throw apiError;
     }
 
     if (result.csrfToken) {
@@ -107,6 +111,10 @@ function updateAccountNavigation() {
             try {
                 const result = await apiRequest("/api/logout", { method: "POST", body: "{}" });
                 currentUser = null;
+                if (otpCountdownInterval !== null) {
+                    window.clearInterval(otpCountdownInterval);
+                    otpCountdownInterval = null;
+                }
                 document.body.classList.add("auth-locked");
                 csrfToken = result.csrfToken;
                 serverCart = { items: [], count: 0, total: 0 };
@@ -975,6 +983,116 @@ async function handleDemoLogin(event) {
     }
 }
 
+function updateOtpCountdown(seconds) {
+    if (otpCountdownInterval !== null) {
+        window.clearInterval(otpCountdownInterval);
+    }
+    otpExpiresAt = Date.now() + seconds * 1000;
+    const countdown = getElement("otpCountdown");
+    const resendButton = getElement("resendOtpButton");
+    const showTime = function () {
+        const remaining = Math.max(0, Math.ceil((otpExpiresAt - Date.now()) / 1000));
+        if (countdown) {
+            countdown.textContent = remaining
+                ? "Code expires in " + remaining + " seconds."
+                : "Code expired. Request a new OTP.";
+        }
+        if (resendButton) {
+            resendButton.disabled = remaining > 0;
+        }
+        if (remaining === 0 && otpCountdownInterval !== null) {
+            window.clearInterval(otpCountdownInterval);
+            otpCountdownInterval = null;
+        }
+    };
+    showTime();
+    otpCountdownInterval = window.setInterval(showTime, 250);
+}
+
+async function requestLoginOtp(event) {
+    if (event) {
+        event.preventDefault();
+        const contactFields = [
+            getElement("otpLoginEmail"),
+            getElement("otpLoginPhone")
+        ];
+        for (const field of contactFields) {
+            if (!field.reportValidity()) return;
+        }
+    }
+    const email = getElement("otpLoginEmail").value.trim();
+    const phone = getElement("otpLoginPhone").value.trim();
+    const message = getElement("otpMessage");
+    const sendButton = getElement("sendOtpButton");
+    const resendButton = getElement("resendOtpButton");
+    sendButton.disabled = true;
+    resendButton.disabled = true;
+
+    try {
+        const result = await apiRequest("/api/auth/otp/send", {
+            method: "POST",
+            body: JSON.stringify({ email, phone })
+        });
+        getElement("otpCodeGroup").hidden = false;
+        getElement("loginOtp").required = true;
+        getElement("verifyOtpButton").hidden = false;
+        sendButton.hidden = true;
+        resendButton.hidden = false;
+        showMessage(message, "OTP sent. Enter it before the 45-second timer ends.", "success");
+        updateOtpCountdown(result.expiresIn);
+    } catch (error) {
+        sendButton.disabled = false;
+        resendButton.disabled = false;
+        if (error.retryAfter) {
+            resendButton.hidden = false;
+            sendButton.hidden = true;
+            getElement("otpCodeGroup").hidden = false;
+            getElement("loginOtp").required = true;
+            getElement("verifyOtpButton").hidden = false;
+            updateOtpCountdown(error.retryAfter);
+        }
+        showMessage(message, error.message, "error");
+    }
+}
+
+async function verifyLoginOtp() {
+    const form = getElement("otpLoginForm");
+    if (!form.reportValidity()) return;
+    const message = getElement("otpMessage");
+    const verifyButton = getElement("verifyOtpButton");
+    verifyButton.disabled = true;
+    try {
+        await apiRequest("/api/auth/otp/verify", {
+            method: "POST",
+            body: JSON.stringify({
+                email: getElement("otpLoginEmail").value.trim(),
+                phone: getElement("otpLoginPhone").value.trim(),
+                otp: getElement("loginOtp").value.trim()
+            })
+        });
+        await loadAuthenticatedStore();
+        form.reset();
+        if (otpCountdownInterval !== null) {
+            window.clearInterval(otpCountdownInterval);
+            otpCountdownInterval = null;
+        }
+        getElement("otpCodeGroup").hidden = true;
+        getElement("verifyOtpButton").hidden = true;
+        getElement("resendOtpButton").hidden = true;
+        getElement("sendOtpButton").hidden = false;
+        showMessage(message, "Your mobile number is verified. Welcome to ShopSphere.", "success");
+        if (pendingBuyProductId || pendingCheckout) {
+            continuePendingPurchase();
+        } else {
+            showSection("home");
+        }
+    } catch (error) {
+        showMessage(message, error.message, "error");
+    } finally {
+        verifyButton.disabled = false;
+    }
+}
+
 async function handleDemoRegister(event) {
     event.preventDefault();
 
@@ -1111,12 +1229,18 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
 
     const loginForm = getElement("loginForm");
+    const otpLoginForm = getElement("otpLoginForm");
 
     if (loginForm) {
         loginForm.addEventListener(
             "submit",
             handleDemoLogin
         );
+    }
+    if (otpLoginForm) {
+        otpLoginForm.addEventListener("submit", requestLoginOtp);
+        getElement("resendOtpButton").addEventListener("click", requestLoginOtp);
+        getElement("verifyOtpButton").addEventListener("click", verifyLoginOtp);
     }
 
     const registerForm = getElement("registerForm");

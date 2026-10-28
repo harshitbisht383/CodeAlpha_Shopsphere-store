@@ -182,24 +182,42 @@
         <section id="login" class="container page-section" style="display: none;">
             <p class="eyebrow">WELCOME TO SHOPSPHERE</p>
             <h1>Sign in to continue</h1>
-            <p class="account-note">Enter your Gmail address and mobile number. SMS OTP with a 45-second validity window can be enabled after an SMS provider is configured; use your password for now.</p>
+            <p class="account-note">Enter your Gmail address and mobile number. A verified mobile code signs you in or creates your account.</p>
+            <form id="otpLoginForm">
+                <label for="otpLoginEmail">Gmail address</label>
+                <input id="otpLoginEmail" name="email" type="email" autocomplete="email" required>
+                <label for="otpLoginPhone">Mobile number</label>
+                <input id="otpLoginPhone" name="tel" type="tel" autocomplete="tel" placeholder="+91 9876543210" required>
+                <div id="otpCodeGroup" hidden>
+                    <label for="loginOtp">6-digit SMS code</label>
+                    <input id="loginOtp" name="one-time-code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6">
+                    <p id="otpCountdown" class="account-note" aria-live="polite"></p>
+                </div>
+                <button id="sendOtpButton" type="submit">Send OTP</button>
+                <button id="verifyOtpButton" class="btn" type="button" hidden>Verify OTP</button>
+                <button id="resendOtpButton" class="btn otp-secondary-button" type="button" disabled hidden>Resend OTP</button>
+                <p id="otpMessage" class="message info" aria-live="polite"></p>
+            </form>
+            <details class="password-login">
+                <summary>Use password instead</summary>
             <form id="loginForm">
                 <label for="loginEmail">Gmail address</label>
                 <input id="loginEmail" name="email" type="email" autocomplete="email" required>
                 <label for="loginPhone">Mobile number</label>
                 <input id="loginPhone" name="tel" type="tel" autocomplete="tel" placeholder="+91 9876543210" required>
-                <label for="loginPassword">Password (OTP sign-in setup is pending)</label>
+                <label for="loginPassword">Password</label>
                 <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
                 <button type="submit">Sign in</button>
                 <p id="loginMessage" class="message info" aria-live="polite"></p>
             </form>
+            </details>
             <p class="account-switch">New to ShopSphere? <button type="button" class="text-button" onclick="showSection('register')">Create an account</button></p>
         </section>
 
         <section id="register" class="container page-section" style="display: none;">
             <p class="eyebrow">JOIN SHOPSPHERE</p>
             <h1>Create your account</h1>
-            <p class="account-note">Use your Gmail address and mobile number. SMS OTP setup is pending; account creation currently uses a password.</p>
+            <p class="account-note">You can also create an account by entering your Gmail address and mobile number on the sign-in page and verifying an SMS OTP. SMS provider setup is required.</p>
             <form id="registerForm">
                 <label for="registerUsername">Username</label>
                 <input id="registerUsername" name="username" autocomplete="username" required>

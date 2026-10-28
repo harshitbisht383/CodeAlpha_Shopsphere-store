@@ -3,8 +3,12 @@ import os
 import re
 import secrets
 import sqlite3
+import time
 from datetime import timedelta
 from pathlib import Path
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request as UrlRequest, urlopen
 from urllib.parse import urlsplit
 
 from flask import Flask, g, jsonify, request, send_from_directory, session
@@ -61,6 +65,17 @@ def init_database():
                 password_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS otp_challenges (
+                phone TEXT PRIMARY KEY,
+                email TEXT NOT NULL COLLATE NOCASE,
+                challenge_id TEXT NOT NULL,
+                expires_at REAL NOT NULL,
+                resend_at REAL NOT NULL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                resend_count INTEGER NOT NULL DEFAULT 0,
+                send_window_start REAL NOT NULL DEFAULT 0,
+                send_count INTEGER NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS products (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,
@@ -112,6 +127,17 @@ def init_database():
         database.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique ON users(phone) WHERE phone IS NOT NULL"
         )
+        otp_columns = {
+            row["name"] for row in database.execute("PRAGMA table_info(otp_challenges)")
+        }
+        if "send_window_start" not in otp_columns:
+            database.execute(
+                "ALTER TABLE otp_challenges ADD COLUMN send_window_start REAL NOT NULL DEFAULT 0"
+            )
+        if "send_count" not in otp_columns:
+            database.execute(
+                "ALTER TABLE otp_challenges ADD COLUMN send_count INTEGER NOT NULL DEFAULT 0"
+            )
         product_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(products)")
         }
@@ -177,6 +203,77 @@ def normalize_phone(value):
     if not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
         return None
     return phone
+
+
+def valid_email(value):
+    return (
+        isinstance(value, str)
+        and len(value) <= 254
+        and re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", value) is not None
+    )
+
+
+def msg91_request(endpoint, parameters, method="GET", auth_header=True):
+    auth_key = os.environ.get("MSG91_AUTH_KEY", "").strip()
+    if not auth_key:
+        raise RuntimeError("MSG91_AUTH_KEY is not configured.")
+
+    query = dict(parameters)
+    headers = {"Accept": "application/json"}
+    if method == "POST":
+        headers["Content-Type"] = "application/json"
+    if auth_header:
+        headers["authkey"] = auth_key
+    else:
+        query["authkey"] = auth_key
+    api_url = "https://control.msg91.com/api/v5/otp"
+    if endpoint:
+        api_url += "/" + endpoint
+    api_request = UrlRequest(
+        api_url + "?" + urlencode(query),
+        headers=headers,
+        data=b"{}" if method == "POST" else None,
+        method=method,
+    )
+    try:
+        with urlopen(api_request, timeout=10) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        app.logger.warning("MSG91 OTP API returned HTTP %s", error.code)
+        raise RuntimeError("SMS provider rejected the OTP request.") from error
+    except (OSError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        app.logger.warning("MSG91 OTP API request failed: %s", type(error).__name__)
+        raise RuntimeError("Could not reach the SMS provider. Please try again.") from error
+    if not isinstance(result, dict):
+        raise RuntimeError("SMS provider returned an invalid response.")
+    return result
+
+
+def send_msg91_otp(phone, resend=False):
+    mobile = phone.lstrip("+")
+    if resend:
+        return msg91_request(
+            "retry",
+            {"mobile": mobile, "retrytype": "text"},
+            auth_header=False,
+        )
+    return msg91_request(
+        "",
+        {
+            "template_id": os.environ.get("MSG91_TEMPLATE_ID", "").strip(),
+            "mobile": mobile,
+            "otp_expiry": 1,
+            "otp_length": 6,
+        },
+        method="POST",
+    )
+
+
+def verify_msg91_otp(phone, otp):
+    return msg91_request(
+        "verify",
+        {"mobile": phone.lstrip("+"), "otp": otp},
+    )
 
 
 def establish_user_session(user_id, guest_id=None):
@@ -336,9 +433,9 @@ def register():
     password = body.get("password", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
         return jsonify(error="Username must be 3–32 characters and use letters, numbers, dot, dash or underscore."), 400
-    if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+    if not valid_email(email):
         return jsonify(error="Enter a valid email address."), 400
-    if body.get("phone") and not phone:
+    if not phone:
         return jsonify(error="Enter a valid mobile number with country code, such as +91 9876543210."), 400
     if not isinstance(password, str) or len(password) < 8 or len(password) > 256:
         return jsonify(error="Password must be between 8 and 256 characters."), 400
@@ -398,6 +495,241 @@ def login():
     authenticated_user = current_user()
     return jsonify(
         user=dict(authenticated_user),
+        csrfToken=session["csrf_token"],
+        cart=cart_payload(),
+    )
+
+
+@app.post("/api/auth/otp/send")
+def send_login_otp():
+    csrf_error = require_csrf()
+    if csrf_error:
+        return csrf_error
+    body, error = json_body()
+    if error:
+        return error
+
+    email = str(body.get("email", "")).strip().lower()
+    phone = normalize_phone(body.get("phone"))
+    if not valid_email(email):
+        return jsonify(error="Enter a valid email address."), 400
+    if not phone:
+        return jsonify(error="Enter a valid mobile number with country code."), 400
+    if not os.environ.get("MSG91_AUTH_KEY", "").strip():
+        return jsonify(error="SMS sign-in is not configured yet. Use password sign-in for now."), 503
+    if not os.environ.get("MSG91_TEMPLATE_ID", "").strip():
+        return jsonify(error="SMS sign-in template is not configured yet. Use password sign-in for now."), 503
+
+    database = get_database()
+    account_by_email = database.execute(
+        "SELECT phone FROM users WHERE email = ? COLLATE NOCASE",
+        (email,),
+    ).fetchone()
+    account_by_phone = database.execute(
+        "SELECT email FROM users WHERE phone = ?",
+        (phone,),
+    ).fetchone()
+    if account_by_email and account_by_email["phone"] not in (None, phone):
+        return jsonify(error="That email is already linked to another mobile number."), 409
+    if account_by_email and account_by_email["phone"] is None:
+        return jsonify(error="This account uses password sign-in. Sign in with your password first."), 409
+    if account_by_phone and account_by_phone["email"].lower() != email:
+        return jsonify(error="That mobile number is already linked to another email."), 409
+
+    now = time.time()
+    database.execute("BEGIN IMMEDIATE")
+    challenge = database.execute(
+        "SELECT * FROM otp_challenges WHERE phone = ?",
+        (phone,),
+    ).fetchone()
+    if challenge and challenge["resend_at"] > now:
+        retry_after = max(1, int(challenge["resend_at"] - now + 0.999))
+        database.rollback()
+        return jsonify(
+            error="Please wait before requesting another code.",
+            retryAfter=retry_after,
+        ), 429
+
+    send_window_start = (
+        challenge["send_window_start"]
+        if challenge and now - challenge["send_window_start"] < 3600
+        else now
+    )
+    previous_send_count = (
+        challenge["send_count"]
+        if challenge and send_window_start == challenge["send_window_start"]
+        else 0
+    )
+    if previous_send_count >= 5:
+        retry_after = max(1, int(send_window_start + 3600 - now + 0.999))
+        database.rollback()
+        return jsonify(
+            error="Too many OTP requests. Try again later.",
+            retryAfter=retry_after,
+        ), 429
+    send_count = previous_send_count + 1
+    resend = bool(challenge and challenge["resend_count"] < 2)
+    resend_count = challenge["resend_count"] + 1 if resend else 0
+    challenge_id = secrets.token_urlsafe(24)
+    database.execute(
+        """
+        INSERT INTO otp_challenges
+            (phone, email, challenge_id, expires_at, resend_at, attempts, resend_count, send_window_start, send_count)
+        VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?)
+        ON CONFLICT(phone) DO UPDATE SET
+            email = excluded.email,
+            challenge_id = excluded.challenge_id,
+            expires_at = excluded.expires_at,
+            resend_at = excluded.resend_at,
+            attempts = 0,
+            resend_count = excluded.resend_count,
+            send_window_start = excluded.send_window_start,
+            send_count = excluded.send_count
+        """,
+        (
+            phone,
+            email,
+            challenge_id,
+            now + 45,
+            now + 45,
+            resend_count,
+            send_window_start,
+            send_count,
+        ),
+    )
+    database.commit()
+
+    try:
+        provider_result = send_msg91_otp(phone, resend=resend)
+    except RuntimeError as error:
+        return jsonify(error=str(error)), 502
+    if provider_result.get("type") != "success":
+        app.logger.warning("MSG91 did not accept the OTP send request.")
+        return jsonify(error="SMS provider could not send the code. Check your MSG91 template and try again."), 502
+    sent_at = time.time()
+    database.execute(
+        """
+        UPDATE otp_challenges SET expires_at = ?, resend_at = ?
+        WHERE phone = ? AND challenge_id = ?
+        """,
+        (sent_at + 45, sent_at + 45, phone, challenge_id),
+    )
+    database.commit()
+    return jsonify(expiresIn=45, resendAfter=45)
+
+
+@app.post("/api/auth/otp/verify")
+def verify_login_otp():
+    csrf_error = require_csrf()
+    if csrf_error:
+        return csrf_error
+    body, error = json_body()
+    if error:
+        return error
+
+    email = str(body.get("email", "")).strip().lower()
+    phone = normalize_phone(body.get("phone"))
+    otp = str(body.get("otp", "")).strip()
+    if not valid_email(email):
+        return jsonify(error="Enter a valid email address."), 400
+    if not phone:
+        return jsonify(error="Enter a valid mobile number with country code."), 400
+    if not re.fullmatch(r"\d{6}", otp):
+        return jsonify(error="Enter the 6-digit code sent to your mobile."), 400
+
+    database = get_database()
+    challenge = database.execute(
+        "SELECT * FROM otp_challenges WHERE phone = ?",
+        (phone,),
+    ).fetchone()
+    now = time.time()
+    if not challenge or challenge["email"].lower() != email:
+        return jsonify(error="Request a new code for this email and mobile number."), 400
+    if challenge["expires_at"] <= now:
+        database.execute("DELETE FROM otp_challenges WHERE phone = ?", (phone,))
+        database.commit()
+        return jsonify(error="That code expired after 45 seconds. Request a new code."), 410
+    if challenge["attempts"] >= 5:
+        database.execute("DELETE FROM otp_challenges WHERE phone = ?", (phone,))
+        database.commit()
+        return jsonify(error="Too many incorrect codes. Request a new code."), 429
+
+    try:
+        provider_result = verify_msg91_otp(phone, otp)
+    except RuntimeError as error:
+        return jsonify(error=str(error)), 502
+    if provider_result.get("type") != "success":
+        database.execute(
+            """
+            UPDATE otp_challenges SET attempts = attempts + 1
+            WHERE phone = ? AND challenge_id = ?
+            """,
+            (phone, challenge["challenge_id"]),
+        )
+        database.commit()
+        return jsonify(error="That code is incorrect or expired."), 401
+    if challenge["expires_at"] <= time.time():
+        database.execute("DELETE FROM otp_challenges WHERE phone = ?", (phone,))
+        database.commit()
+        return jsonify(error="That code expired after 45 seconds. Request a new code."), 410
+
+    guest_id = session.get("guest_id")
+    database.execute("BEGIN IMMEDIATE")
+    account_by_email = database.execute(
+        "SELECT id, phone FROM users WHERE email = ? COLLATE NOCASE",
+        (email,),
+    ).fetchone()
+    account_by_phone = database.execute(
+        "SELECT id, email FROM users WHERE phone = ?",
+        (phone,),
+    ).fetchone()
+    if account_by_phone and account_by_email and account_by_phone["id"] != account_by_email["id"]:
+        database.rollback()
+        return jsonify(error="That email and mobile number belong to different accounts."), 409
+    if account_by_email and account_by_email["phone"] is None:
+        database.rollback()
+        return jsonify(error="Sign in with your password first to link this mobile number to the existing account."), 409
+    if account_by_phone and account_by_phone["email"].lower() != email:
+        database.rollback()
+        return jsonify(error="That mobile number is already linked to another email."), 409
+
+    try:
+        if account_by_email:
+            user_id = account_by_email["id"]
+        elif account_by_phone:
+            user_id = account_by_phone["id"]
+        else:
+            username_base = re.sub(
+                r"[^A-Za-z0-9_.-]+",
+                "-",
+                email.split("@", 1)[0],
+            ).strip("-._")[:22] or "shopper"
+            username = username_base + "-" + secrets.token_hex(4)
+            cursor = database.execute(
+                """
+                INSERT INTO users (username, email, phone, password_hash)
+                VALUES (?, ?, ?, ?)
+                """,
+                (
+                    username,
+                    email,
+                    phone,
+                    generate_password_hash(secrets.token_urlsafe(32)),
+                ),
+            )
+            user_id = cursor.lastrowid
+        database.execute(
+            "DELETE FROM otp_challenges WHERE phone = ? AND challenge_id = ?",
+            (phone, challenge["challenge_id"]),
+        )
+        database.commit()
+    except sqlite3.IntegrityError:
+        database.rollback()
+        return jsonify(error="That email or mobile number is already linked to another account."), 409
+
+    establish_user_session(user_id, guest_id)
+    return jsonify(
+        user=dict(current_user()),
         csrfToken=session["csrf_token"],
         cart=cart_payload(),
     )
