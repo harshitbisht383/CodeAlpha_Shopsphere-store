@@ -24,6 +24,15 @@ Open <http://127.0.0.1:8000/> in your browser. Keep the terminal running while y
 
 The SQLite database is created locally when the app starts. It is intentionally excluded from Git; the product catalog is loaded from `products.json`.
 
+## Deploy a free demo on Render
+
+1. Open the [Render deployment setup](https://render.com/deploy?repo=https://github.com/harshitbisht383/CodeAlpha_Shopsphere-store).
+2. Sign in to Render and authorize access to this GitHub repository.
+3. Review the `shopsphere-store` web service settings from `render.yaml`, then create the service.
+4. When Render finishes deploying, open the `onrender.com` URL shown on the service page.
+
+The free demo uses SQLite under `/tmp`. Its accounts, seller listings, carts, and orders are temporary and can be lost when the service restarts or redeploys. This app does not collect payment or arrange delivery. Use a persistent database and payment provider before handling real customers or orders.
+
 ## Run tests
 
 ```powershell
