@@ -43,6 +43,7 @@ class ShopSphereApiTests(unittest.TestCase):
             {
                 "username": "ajay-demo",
                 "email": "ajay@example.com",
+                "phone": "+91 98765 43210",
                 "password": "correct horse battery",
             },
         )
@@ -51,6 +52,9 @@ class ShopSphereApiTests(unittest.TestCase):
         return response
 
     def test_catalog_and_csrf_protection(self):
+        bootstrap = self.client.get("/api/bootstrap").get_json()
+        self.assertEqual(bootstrap["products"], [])
+        self.assertEqual(self.register().status_code, 201)
         bootstrap = self.client.get("/api/bootstrap").get_json()
         self.assertEqual(len(bootstrap["products"]), 50)
         response = self.request_json(
@@ -154,11 +158,54 @@ class ShopSphereApiTests(unittest.TestCase):
         login = self.request_json(
             "POST",
             "/api/login",
-            {"identity": "ajay@example.com", "password": "correct horse battery"},
+            {
+                "identity": "ajay@example.com",
+                "phone": "+919876543210",
+                "password": "correct horse battery",
+            },
         )
         self.assertEqual(login.status_code, 200)
         self.assertEqual(login.get_json()["user"]["username"], "ajay-demo")
         self.assertEqual(self.client.get("/api/orders").status_code, 200)
+
+    def test_password_login_requires_matching_mobile_when_supplied(self):
+        self.assertEqual(self.register().status_code, 201)
+        self.request_json("POST", "/api/logout", {})
+        self.csrf_token = self.client.get("/api/bootstrap").get_json()["csrfToken"]
+        wrong_phone = self.request_json(
+            "POST",
+            "/api/login",
+            {
+                "identity": "ajay@example.com",
+                "phone": "+919876543211",
+                "password": "correct horse battery",
+            },
+        )
+        self.assertEqual(wrong_phone.status_code, 401)
+        correct_phone = self.request_json(
+            "POST",
+            "/api/login",
+            {
+                "identity": "ajay@example.com",
+                "phone": "+91 98765 43210",
+                "password": "correct horse battery",
+            },
+        )
+        self.assertEqual(correct_phone.status_code, 200)
+        self.assertEqual(correct_phone.get_json()["user"]["phone"], "+919876543210")
+
+    def test_registration_rejects_invalid_mobile_number(self):
+        response = self.request_json(
+            "POST",
+            "/api/register",
+            {
+                "username": "invalid-phone",
+                "email": "invalid-phone@example.com",
+                "phone": "not-a-number",
+                "password": "correct horse battery",
+            },
+        )
+        self.assertEqual(response.status_code, 400)
 
     def test_checkout_rejects_invalid_location_and_empty_cart(self):
         self.assertEqual(self.register().status_code, 201)
@@ -300,6 +347,41 @@ class ShopSphereApiTests(unittest.TestCase):
         product["stock"] = 0
         response = self.request_json("POST", "/api/seller/products", product)
         self.assertEqual(response.status_code, 400)
+
+    def test_existing_database_gets_optional_phone_column(self):
+        database_path = Path(self.temp_dir.name) / "legacy.sqlite3"
+        database = shopsphere.sqlite3.connect(database_path)
+        try:
+            database.execute(
+                """
+                CREATE TABLE users (
+                    id INTEGER PRIMARY KEY,
+                    username TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            database.commit()
+        finally:
+            database.close()
+
+        original_path = shopsphere.DATABASE_PATH
+        try:
+            shopsphere.DATABASE_PATH = database_path
+            shopsphere.init_database()
+            database = shopsphere.connect_database()
+            try:
+                columns = {
+                    row["name"]
+                    for row in database.execute("PRAGMA table_info(users)")
+                }
+            finally:
+                database.close()
+            self.assertIn("phone", columns)
+        finally:
+            shopsphere.DATABASE_PATH = original_path
 
 
 if __name__ == "__main__":

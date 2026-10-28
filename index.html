@@ -8,7 +8,7 @@
     <link rel="stylesheet" href="./style.css">
     <script src="./script.js" defer></script>
 </head>
-<body>
+<body class="auth-locked">
     <header class="header">
         <div class="header-main">
             <div class="container navbar">
@@ -180,25 +180,33 @@
         </section>
 
         <section id="login" class="container page-section" style="display: none;">
-            <h1>Login</h1>
+            <p class="eyebrow">WELCOME TO SHOPSPHERE</p>
+            <h1>Sign in to continue</h1>
+            <p class="account-note">Enter your Gmail address and mobile number. SMS OTP with a 45-second validity window can be enabled after an SMS provider is configured; use your password for now.</p>
             <form id="loginForm">
-                <label for="loginUsername">Username</label>
-                <input id="loginUsername" name="username" autocomplete="username" required>
-                <label for="loginPassword">Password</label>
+                <label for="loginEmail">Gmail address</label>
+                <input id="loginEmail" name="email" type="email" autocomplete="email" required>
+                <label for="loginPhone">Mobile number</label>
+                <input id="loginPhone" name="tel" type="tel" autocomplete="tel" placeholder="+91 9876543210" required>
+                <label for="loginPassword">Password (OTP sign-in setup is pending)</label>
                 <input id="loginPassword" name="password" type="password" autocomplete="current-password" required>
-                <button type="submit">Login</button>
+                <button type="submit">Sign in</button>
                 <p id="loginMessage" class="message info" aria-live="polite"></p>
             </form>
+            <p class="account-switch">New to ShopSphere? <button type="button" class="text-button" onclick="showSection('register')">Create an account</button></p>
         </section>
 
         <section id="register" class="container page-section" style="display: none;">
+            <p class="eyebrow">JOIN SHOPSPHERE</p>
             <h1>Create your account</h1>
-            <p class="account-note">Create an account to save your cart and view your orders.</p>
+            <p class="account-note">Use your Gmail address and mobile number. SMS OTP setup is pending; account creation currently uses a password.</p>
             <form id="registerForm">
                 <label for="registerUsername">Username</label>
                 <input id="registerUsername" name="username" autocomplete="username" required>
-                <label for="registerEmail">Email address</label>
+                <label for="registerEmail">Gmail address</label>
                 <input id="registerEmail" name="email" type="email" autocomplete="email" required>
+                <label for="registerPhone">Mobile number</label>
+                <input id="registerPhone" name="tel" type="tel" autocomplete="tel" placeholder="+91 9876543210" required>
                 <label for="registerPassword">Password</label>
                 <input id="registerPassword" name="password" type="password" autocomplete="new-password" minlength="8" required>
                 <label for="confirmPassword">Confirm password</label>

@@ -9,6 +9,14 @@ function getElement(id) {
     return document.getElementById(id);
 }
 
+async function loadAuthenticatedStore() {
+    const bootstrap = await apiRequest("/api/bootstrap");
+    renderAdditionalProducts(bootstrap.products);
+    serverCart = bootstrap.cart;
+    renderDemoCart();
+    filterProducts();
+}
+
 function formatPrice(price) {
     return Number(price).toLocaleString("en-IN", {
         maximumFractionDigits: 2
@@ -62,6 +70,7 @@ async function apiRequest(path, options = {}) {
     }
     if (result.user !== undefined) {
         currentUser = result.user;
+        document.body.classList.toggle("auth-locked", !currentUser);
         updateAccountNavigation();
     }
     if (result.cart) {
@@ -98,9 +107,14 @@ function updateAccountNavigation() {
             try {
                 const result = await apiRequest("/api/logout", { method: "POST", body: "{}" });
                 currentUser = null;
+                document.body.classList.add("auth-locked");
                 csrfToken = result.csrfToken;
+                serverCart = { items: [], count: 0, total: 0 };
+                getElement("productGrid")?.replaceChildren();
                 logoutButton.remove();
                 updateAccountNavigation();
+                renderDemoCart();
+                showSection("login");
                 showMessage(getElement("cartFeedback"), "You have signed out.", "info");
                 getElement("cartFeedback").hidden = false;
             } catch (error) {
@@ -550,11 +564,19 @@ function showSection(sectionId) {
         "register"
     ];
 
-    if (sectionId === "seller" && !currentUser) {
+    if (!currentUser && sectionId !== "login" && sectionId !== "register") {
         showSection("login");
-        showMessage(getElement("loginMessage"), "Sign in or create an account to list products.", "info");
+        showMessage(
+            getElement("loginMessage"),
+            "Please sign in or create an account to continue.",
+            "info"
+        );
         return;
     }
+    document.body.classList.toggle(
+        "auth-register",
+        !currentUser && sectionId === "register"
+    );
 
     sectionIds.forEach(id => {
         const section = getElement(id);
@@ -931,14 +953,16 @@ async function handleDemoLogin(event) {
     }
 
     const message = getElement("loginMessage");
-    const identity = getElement("loginUsername").value.trim();
+    const identity = getElement("loginEmail").value.trim();
+    const phone = getElement("loginPhone").value.trim();
     const password = getElement("loginPassword").value;
 
     try {
         await apiRequest("/api/login", {
             method: "POST",
-            body: JSON.stringify({ identity, password })
+            body: JSON.stringify({ identity, phone, password })
         });
+        await loadAuthenticatedStore();
         form.reset();
         showMessage(message, "Welcome back, " + currentUser.username + ".", "success");
         if (pendingBuyProductId || pendingCheckout) {
@@ -985,9 +1009,11 @@ async function handleDemoRegister(event) {
             body: JSON.stringify({
                 username: getElement("registerUsername").value.trim(),
                 email: getElement("registerEmail").value.trim(),
+                phone: getElement("registerPhone").value.trim(),
                 password: password.value
             })
         });
+        await loadAuthenticatedStore();
         form.reset();
         showMessage(message, "Account created. Welcome, " + currentUser.username + "!", "success");
         if (pendingBuyProductId || pendingCheckout) {
@@ -1012,7 +1038,9 @@ document.addEventListener("DOMContentLoaded", async function () {
         serverCart = bootstrap.cart;
         renderDemoCart();
         currentUser = bootstrap.user;
+        document.body.classList.toggle("auth-locked", !currentUser);
         updateAccountNavigation();
+        showSection(currentUser ? "home" : "login");
     } catch (error) {
         const feedback = getElement("cartFeedback");
         showMessage(

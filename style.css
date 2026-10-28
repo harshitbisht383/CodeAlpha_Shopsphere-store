@@ -1085,6 +1085,57 @@ button:disabled {
     margin-bottom: 12px;
 }
 
+.auth-locked .header,
+.auth-locked .footer {
+    display: none;
+}
+
+.auth-locked #home {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    padding: 32px 0;
+    background:
+        radial-gradient(ellipse at top left, rgba(89, 70, 199, 0.13), transparent 50%),
+        var(--background);
+}
+
+.auth-locked #home>section:not(#login):not(#register) {
+    display: none !important;
+}
+
+.auth-locked #login,
+.auth-locked #register {
+    width: min(92%, 540px);
+    margin: 0 auto;
+    padding: 36px;
+    background: var(--white);
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    box-shadow: 0 18px 55px rgba(55, 40, 97, 0.13);
+}
+
+.auth-locked #login {
+    display: block !important;
+}
+
+.auth-locked #register {
+    display: none !important;
+}
+
+.auth-locked.auth-register #login {
+    display: none !important;
+}
+
+.auth-locked.auth-register #register {
+    display: block !important;
+}
+
+.auth-locked #login h1,
+.auth-locked #register h1 {
+    margin-bottom: 12px;
+}
+
 .market-search button {
     background: #ffbd69;
     color: #30233e;

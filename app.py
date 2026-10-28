@@ -57,6 +57,7 @@ def init_database():
                 id INTEGER PRIMARY KEY,
                 username TEXT NOT NULL COLLATE NOCASE UNIQUE,
                 email TEXT NOT NULL COLLATE NOCASE UNIQUE,
+                phone TEXT UNIQUE,
                 password_hash TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -102,6 +103,14 @@ def init_database():
                 seller_id INTEGER REFERENCES users(id)
             );
             """
+        )
+        user_columns = {
+            row["name"] for row in database.execute("PRAGMA table_info(users)")
+        }
+        if "phone" not in user_columns:
+            database.execute("ALTER TABLE users ADD COLUMN phone TEXT")
+        database.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS users_phone_unique ON users(phone) WHERE phone IS NOT NULL"
         )
         product_columns = {
             row["name"] for row in database.execute("PRAGMA table_info(products)")
@@ -161,6 +170,25 @@ def json_body():
     return body, None
 
 
+def normalize_phone(value):
+    phone = re.sub(r"[\s().-]", "", str(value or ""))
+    if re.fullmatch(r"[6-9]\d{9}", phone):
+        phone = "+91" + phone
+    if not re.fullmatch(r"\+[1-9]\d{7,14}", phone):
+        return None
+    return phone
+
+
+def establish_user_session(user_id, guest_id=None):
+    session.clear()
+    session.permanent = True
+    session["user_id"] = user_id
+    session["csrf_token"] = secrets.token_urlsafe(32)
+    if guest_id:
+        session["guest_id"] = guest_id
+    merge_guest_cart(user_id)
+
+
 def require_csrf():
     expected = session.get("csrf_token")
     supplied = request.headers.get("X-CSRF-Token", "")
@@ -174,7 +202,7 @@ def current_user():
     if user_id is None:
         return None
     return get_database().execute(
-        "SELECT id, username, email FROM users WHERE id = ?",
+        "SELECT id, username, email, phone FROM users WHERE id = ?",
         (user_id,),
     ).fetchone()
 
@@ -277,18 +305,20 @@ def health():
 def bootstrap():
     session.permanent = True
     csrf_token = session.setdefault("csrf_token", secrets.token_urlsafe(32))
-    products = get_database().execute(
-        """
-        SELECT id, name, category, price, old_price AS oldPrice, icon, rating, description, badge, stock, image_url AS imageUrl
-        FROM products ORDER BY name COLLATE NOCASE
-        """
-    ).fetchall()
     user = current_user()
+    products = []
+    if user:
+        products = get_database().execute(
+            """
+            SELECT id, name, category, price, old_price AS oldPrice, icon, rating, description, badge, stock, image_url AS imageUrl
+            FROM products ORDER BY name COLLATE NOCASE
+            """
+        ).fetchall()
     return jsonify(
         csrfToken=csrf_token,
         user=dict(user) if user else None,
-        products=[dict(product) for product in products],
-        cart=cart_payload(),
+        products=[dict(product) for product in products] if user else [],
+        cart=cart_payload() if user else {"items": [], "count": 0, "total": 0},
     )
 
 
@@ -302,30 +332,27 @@ def register():
         return error
     username = str(body.get("username", "")).strip()
     email = str(body.get("email", "")).strip().lower()
+    phone = normalize_phone(body.get("phone"))
     password = body.get("password", "")
     if not re.fullmatch(r"[A-Za-z0-9_.-]{3,32}", username):
         return jsonify(error="Username must be 3–32 characters and use letters, numbers, dot, dash or underscore."), 400
     if len(email) > 254 or not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
         return jsonify(error="Enter a valid email address."), 400
+    if body.get("phone") and not phone:
+        return jsonify(error="Enter a valid mobile number with country code, such as +91 9876543210."), 400
     if not isinstance(password, str) or len(password) < 8 or len(password) > 256:
         return jsonify(error="Password must be between 8 and 256 characters."), 400
     database = get_database()
     guest_id = session.get("guest_id")
     try:
         cursor = database.execute(
-            "INSERT INTO users (username, email, password_hash) VALUES (?, ?, ?)",
-            (username, email, generate_password_hash(password)),
+            "INSERT INTO users (username, email, phone, password_hash) VALUES (?, ?, ?, ?)",
+            (username, email, phone, generate_password_hash(password)),
         )
         database.commit()
     except sqlite3.IntegrityError:
-        return jsonify(error="That username or email is already registered."), 409
-    session.clear()
-    session.permanent = True
-    session["user_id"] = cursor.lastrowid
-    session["csrf_token"] = secrets.token_urlsafe(32)
-    if guest_id:
-        session["guest_id"] = guest_id
-    merge_guest_cart(cursor.lastrowid)
+        return jsonify(error="That username, email or mobile number is already registered."), 409
+    establish_user_session(cursor.lastrowid, guest_id)
     user = current_user()
     return jsonify(
         user=dict(user),
@@ -343,22 +370,31 @@ def login():
     if error:
         return error
     identity = str(body.get("identity", "")).strip()
+    phone_value = body.get("phone")
+    phone = normalize_phone(phone_value) if phone_value else None
+    if phone_value and not phone:
+        return jsonify(error="Enter a valid mobile number with country code, such as +91 9876543210."), 400
     password = body.get("password", "")
     user = get_database().execute(
-        "SELECT id, username, email, password_hash FROM users WHERE username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE",
+        "SELECT id, username, email, phone, password_hash FROM users WHERE username = ? COLLATE NOCASE OR email = ? COLLATE NOCASE",
         (identity, identity),
     ).fetchone()
     if not user or not isinstance(password, str) or not check_password_hash(user["password_hash"], password):
         return jsonify(error="Username/email or password is incorrect."), 401
+    if phone and user["phone"] and phone != user["phone"]:
+        return jsonify(error="That mobile number does not match this account."), 401
+    if phone and not user["phone"]:
+        try:
+            get_database().execute(
+                "UPDATE users SET phone = ? WHERE id = ?",
+                (phone, user["id"]),
+            )
+            get_database().commit()
+        except sqlite3.IntegrityError:
+            return jsonify(error="That mobile number is already linked to another account."), 409
     user_id = user["id"]
     guest_id = session.get("guest_id")
-    session.clear()
-    session.permanent = True
-    session["user_id"] = user_id
-    session["csrf_token"] = secrets.token_urlsafe(32)
-    if guest_id:
-        session["guest_id"] = guest_id
-    merge_guest_cart(user_id)
+    establish_user_session(user_id, guest_id)
     authenticated_user = current_user()
     return jsonify(
         user=dict(authenticated_user),

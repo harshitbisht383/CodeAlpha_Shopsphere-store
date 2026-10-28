@@ -2,6 +2,8 @@
 
 A small online store demo built with Flask, SQLite, HTML, CSS, and JavaScript.
 
+Visitors must sign in before the storefront is shown. Login and registration require an email address and mobile number; password sign-in is the current fallback. SMS OTP is not active until an SMS provider is selected and configured. Configure its expiry and resend interval to 45 seconds before enabling production OTP sign-in.
+
 Registered users can list products from the **Sell a product** dashboard. Listings include a category, rupee price, stock quantity, description, and optional HTTPS image URL. Buyers can add available items to their cart and submit an order; sellers can view the items, buyer contact details, and delivery address for orders containing their products.
 
 **Payments and delivery are not integrated.** Checkout only records an unpaid demo order; it does not charge a customer or arrange shipping. Buyers and sellers must arrange payment and delivery themselves. Do not treat this demo as a live marketplace or enter sensitive payment details.
