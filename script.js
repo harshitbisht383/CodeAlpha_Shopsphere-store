@@ -239,8 +239,6 @@ function filterProducts() {
    3. SERVER-BACKED CART
 ========================================== */
 
-let activeLocationWatchId = null;
-
 function renderAdditionalProducts(products) {
     const productGrid = getElement("productGrid");
     if (!productGrid) return;
@@ -477,6 +475,7 @@ async function addToCart(productId) {
 }
 
 async function buyNow(productId) {
+    requestCurrentLocation();
     if (!currentUser) {
         pendingBuyProductId = productId;
         pendingCheckout = false;
@@ -608,10 +607,6 @@ function showSection(sectionId) {
         loadSellerDashboard();
     }
 
-    if (sectionId !== "checkout") {
-        stopLocationSharing("Location updates stopped because checkout was closed.");
-    }
-
     const target = sectionId === "home"
         ? getElement("home")
         : getElement(sectionId);
@@ -641,15 +636,15 @@ function goToCheckout() {
         return;
     }
 
+    requestCurrentLocation();
     showSection("checkout");
 }
 
-async function requestCurrentLocation() {
+function requestCurrentLocation() {
     const status = getElement("locationStatus");
     const locationButton = getElement("useCurrentLocation");
-
-    if (activeLocationWatchId !== null) {
-        stopLocationSharing("Live location sharing stopped. Your last location is still in the address field.");
+    if (currentGpsPosition) {
+        showMessage(status, "Delivery location is ready. Please enter your street address below.", "success");
         return;
     }
 
@@ -680,62 +675,26 @@ async function requestCurrentLocation() {
         return;
     }
 
-    if (navigator.permissions && navigator.permissions.query) {
-        try {
-            const permission = await navigator.permissions.query({
-                name: "geolocation"
-            });
-
-            if (permission.state === "denied") {
-                showMessage(
-                    status,
-                    "Location is blocked for this site in your browser. Open the site controls beside the address bar for http://127.0.0.1:8000, change Location to Allow, reload this page, then try again.",
-                    "error"
-                );
-                return;
-            }
-        } catch (error) {
-            console.info("Could not inspect location permission; requesting location directly.", error);
-        }
-    }
-
-    showMessage(status, "Requesting permission and starting live location updates...", "info");
+    showMessage(status, "Please allow location access in your browser to add your delivery coordinates. You can also enter your address manually.", "info");
     if (locationButton) {
-        locationButton.disabled = false;
-        locationButton.textContent = "Stop sharing location";
+        locationButton.disabled = true;
+        locationButton.textContent = "Requesting location...";
     }
 
     try {
-        activeLocationWatchId = navigator.geolocation.watchPosition(
+        navigator.geolocation.getCurrentPosition(
         function (position) {
             const { latitude, longitude, accuracy } = position.coords;
             currentGpsPosition = { latitude, longitude, accuracy };
-            const address = getElement("customerAddress");
-
-            if (address) {
-                const locationDetails =
-                    "GPS location: " + latitude.toFixed(6) +
-                    ", " + longitude.toFixed(6);
-                const addressLines = address.value
-                    .split("\n")
-                    .filter(line => !line.trim().startsWith("GPS location:"));
-                const manualAddress = addressLines.join("\n").trim();
-                address.value = manualAddress
-                    ? manualAddress + "\n" + locationDetails
-                    : locationDetails;
-            }
-
-            showMessage(
-                status,
-                "Live location is updating (accuracy about " +
-                Math.round(accuracy) +
-                " m). Add your house number, street and area above. Coordinates are sent with your order when you submit checkout.",
-                "success"
-            );
+            showMessage(status, "Delivery location added (accuracy about " + Math.round(accuracy) + " m). Enter your house number, street and area in the address field.", "success");
 
             const deliveryText = document.querySelector(".delivery-link strong");
             if (deliveryText) {
                 deliveryText.textContent = "Location ready";
+            }
+            if (locationButton) {
+                locationButton.disabled = false;
+                locationButton.textContent = "Update delivery location";
             }
 
         },
@@ -756,12 +715,11 @@ async function requestCurrentLocation() {
                     message = "Could not get your location. Please type your address manually.";
             }
 
-            stopLocationSharing(message);
             showMessage(status, message, "error");
 
             if (locationButton) {
                 locationButton.disabled = false;
-                locationButton.textContent = "Use my current location";
+                locationButton.textContent = "Allow location for delivery";
             }
         },
         {
@@ -771,7 +729,6 @@ async function requestCurrentLocation() {
         }
         );
     } catch (error) {
-        activeLocationWatchId = null;
         showMessage(
             status,
             "Could not start location access: " +
@@ -782,39 +739,10 @@ async function requestCurrentLocation() {
 
         if (locationButton) {
             locationButton.disabled = false;
-            locationButton.textContent = "Use my current location";
+            locationButton.textContent = "Allow location for delivery";
         }
-        return;
-    }
-
-    if (activeLocationWatchId === null && locationButton) {
-        locationButton.disabled = false;
-        locationButton.textContent = "Use my current location";
-        showMessage(
-            status,
-            "Could not start location updates. Please type your address manually.",
-            "error"
-        );
     }
 }
-
-function stopLocationSharing(message) {
-    if (activeLocationWatchId !== null && navigator.geolocation) {
-        navigator.geolocation.clearWatch(activeLocationWatchId);
-        activeLocationWatchId = null;
-    }
-
-    const locationButton = getElement("useCurrentLocation");
-    if (locationButton) {
-        locationButton.disabled = false;
-        locationButton.textContent = "Use my current location";
-    }
-
-    if (message) {
-        showMessage(getElement("locationStatus"), message, "info");
-    }
-}
-
 
 /* ==========================================
    5. CHECKOUT FORM
@@ -836,8 +764,6 @@ async function handleDemoCheckout(event) {
     }
 
     const customerName = getElement("customerName");
-    stopLocationSharing();
-
     const checkoutData = {
         name: customerName.value.trim(),
         email: getElement("customerEmail").value.trim(),

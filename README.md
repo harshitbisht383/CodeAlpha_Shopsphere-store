@@ -15,6 +15,8 @@ Test SMS delivery with your own phone first. SMS charges and provider/template a
 
 Registered users can list products from the **Sell a product** dashboard. Listings include a category, rupee price, stock quantity, description, and optional HTTPS image URL. Buyers can add available items to their cart and submit an order; sellers can view the items, buyer contact details, and delivery address for orders containing their products.
 
+When a buyer starts a purchase, the browser may ask permission for a one-time location reading. Location is optional; the buyer must enter a delivery address manually, and GPS coordinates are included with the order only when access is granted. Browser location access requires HTTPS or localhost.
+
 **Payments and delivery are not integrated.** Checkout only records an unpaid demo order; it does not charge a customer or arrange shipping. Buyers and sellers must arrange payment and delivery themselves. Do not treat this demo as a live marketplace or enter sensitive payment details.
 
 ## Requirements
