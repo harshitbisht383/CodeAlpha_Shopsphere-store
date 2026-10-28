@@ -21,12 +21,13 @@
                 </a>
                 <form class="market-search" role="search">
                     <label class="visually-hidden" for="searchInput">Search ShopSphere</label>
-                    <input type="search" id="searchInput" placeholder="Search ShopSphere" autocomplete="off">
+                    <input type="search" id="searchInput" placeholder="Search products by name or category" autocomplete="off" aria-label="Search products by name or category">
                     <button type="submit" aria-label="Search">⌕</button>
                 </form>
                 <div class="nav-actions">
                     <button type="button" id="loginAction" onclick="showSection('login')"><small>Hello, sign in</small><strong>Account</strong></button>
                     <button type="button" id="registerAction" onclick="showSection('register')"><small>New here?</small><strong>Register</strong></button>
+                    <button type="button" id="sellerAction" onclick="showSection('seller')" hidden><small>Seller tools</small><strong>Sell a product</strong></button>
                     <a class="orders-link" href="#products"><small>Explore</small><strong>Products</strong></a>
                     <button class="cart-action" type="button" onclick="showSection('cart')" aria-label="Open cart">
                         <span class="cart-icon" aria-hidden="true">🛒</span>
@@ -57,6 +58,10 @@
                     <h1>Big finds for<br>every kind of day.</h1>
                     <p>Discover customer favorites across tech, style and home.</p>
                     <a class="btn" href="#products">Shop today's picks</a>
+                    <div class="home-account-actions" aria-label="Account options">
+                        <button class="btn account-button" type="button" onclick="showSection('login')">Login</button>
+                        <button class="btn account-button account-button-secondary" type="button" onclick="showSection('register')">Create account</button>
+                    </div>
                 </div>
                 <div class="hero-image-placeholder" aria-label="Featured shopping picks">
                     <span aria-hidden="true">✨</span>
@@ -120,6 +125,7 @@
 
         <section id="checkout" class="container page-section" style="display: none;">
             <h1>Checkout</h1>
+            <p class="message warning">Demo checkout: this saves an order for the seller but does not collect payment.</p>
             <div class="checkout-summary">
                 <h2>Order total: ₹<span id="checkoutTotal">0</span></h2>
             </div>
@@ -139,6 +145,38 @@
                 <button type="submit">Place order</button>
                 <p id="orderMessage" class="message info" aria-live="polite"></p>
             </form>
+        </section>
+
+        <section id="seller" class="container page-section" style="display: none;">
+            <h1>Seller dashboard</h1>
+            <p class="account-note">List products you have for sale. Buyers can place demo orders; contact them to arrange payment and delivery.</p>
+            <form id="sellerProductForm">
+                <label for="sellerProductName">Product name</label>
+                <input id="sellerProductName" name="name" maxlength="120" required>
+                <label for="sellerProductCategory">Category</label>
+                <select id="sellerProductCategory" name="category" required>
+                    <option value="electronics">Electronics</option>
+                    <option value="fashion">Fashion</option>
+                    <option value="home">Home &amp; Living</option>
+                    <option value="accessories">Accessories</option>
+                    <option value="shoes">Shoes</option>
+                </select>
+                <label for="sellerProductPrice">Price (₹, whole number)</label>
+                <input id="sellerProductPrice" name="price" type="number" min="1" max="10000000" step="1" required>
+                <label for="sellerProductStock">Available quantity</label>
+                <input id="sellerProductStock" name="stock" type="number" min="1" max="9999" step="1" required>
+                <label for="sellerProductDescription">Description</label>
+                <textarea id="sellerProductDescription" name="description" maxlength="2000" rows="4" required></textarea>
+                <label for="sellerProductImage">Product image URL (optional, HTTPS)</label>
+                <input id="sellerProductImage" name="imageUrl" type="url" maxlength="2048" placeholder="https://example.com/product.jpg">
+                <button type="submit">List product</button>
+                <p id="sellerProductMessage" class="message info" aria-live="polite"></p>
+            </form>
+            <h2>Your listed products</h2>
+            <div id="sellerProducts" class="seller-list"></div>
+            <h2>Orders for your products</h2>
+            <p class="account-note">These are unpaid demo orders. Use the buyer's contact details to arrange payment and delivery yourself.</p>
+            <div id="sellerOrders" class="seller-list"></div>
         </section>
 
         <section id="login" class="container page-section" style="display: none;">
@@ -181,7 +219,7 @@
                 <a href="#products">Products</a>
                 <a href="#cart" onclick="showSection('cart')">Cart</a>
             </div>
-            <p>&copy; 2026 ShopSphere. Demo storefront with server-saved accounts, carts and orders.</p>
+            <p>&copy; 2026 ShopSphere. Demo marketplace: orders are saved, but payments and delivery are arranged outside this app.</p>
         </div>
     </footer>
 </body>

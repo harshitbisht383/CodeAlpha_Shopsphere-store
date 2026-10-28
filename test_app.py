@@ -192,6 +192,115 @@ class ShopSphereApiTests(unittest.TestCase):
         )
         self.assertEqual(invalid_location.status_code, 400)
 
+    def test_registered_seller_can_list_product_and_receive_demo_order(self):
+        self.assertEqual(self.register().status_code, 201)
+        product_response = self.request_json(
+            "POST",
+            "/api/seller/products",
+            {
+                "name": "Handmade Desk Lamp",
+                "category": "home",
+                "price": 1499,
+                "stock": 2,
+                "description": "A handmade lamp for a reading desk.",
+                "imageUrl": "https://example.com/lamp.jpg",
+            },
+        )
+        self.assertEqual(product_response.status_code, 201)
+        product_id = product_response.get_json()["productId"]
+        catalog_product = next(
+            product for product in self.client.get("/api/bootstrap").get_json()["products"]
+            if product["id"] == product_id
+        )
+        self.assertEqual(catalog_product["stock"], 2)
+        self.assertEqual(catalog_product["imageUrl"], "https://example.com/lamp.jpg")
+
+        invalid_image = self.request_json(
+            "POST",
+            "/api/seller/products",
+            {
+                "name": "Unsafe image",
+                "category": "home",
+                "price": 100,
+                "stock": 1,
+                "description": "An invalid image URL should be rejected.",
+                "imageUrl": "http://example.com/lamp.jpg",
+            },
+        )
+        self.assertEqual(invalid_image.status_code, 400)
+
+        self.request_json("POST", "/api/logout", {})
+        self.csrf_token = self.client.get("/api/bootstrap").get_json()["csrfToken"]
+        buyer = self.request_json(
+            "POST",
+            "/api/register",
+            {
+                "username": "buyer-demo",
+                "email": "buyer@example.com",
+                "password": "correct horse battery",
+            },
+        )
+        self.assertEqual(buyer.status_code, 201)
+        self.csrf_token = buyer.get_json()["csrfToken"]
+        self.request_json("POST", "/api/cart", {"productId": product_id})
+        oversell = self.request_json(
+            "POST",
+            "/api/cart",
+            {"productId": product_id, "quantity": 2},
+        )
+        self.assertEqual(oversell.status_code, 400)
+        oversell_update = self.request_json(
+            "PUT",
+            "/api/cart/" + product_id,
+            {"quantity": 3},
+        )
+        self.assertEqual(oversell_update.status_code, 400)
+        order = self.request_json(
+            "POST",
+            "/api/checkout",
+            {
+                "name": "Buyer Example",
+                "email": "buyer@example.com",
+                "address": "42 Market Road, Jaipur",
+            },
+        )
+        self.assertEqual(order.status_code, 201)
+        self.assertEqual(order.get_json()["total"], 1499)
+        self.assertEqual(
+            self.query_one("SELECT stock FROM products WHERE id = ?", (product_id,))[0],
+            1,
+        )
+
+        self.request_json("POST", "/api/logout", {})
+        self.csrf_token = self.client.get("/api/bootstrap").get_json()["csrfToken"]
+        seller_login = self.request_json(
+            "POST",
+            "/api/login",
+            {"identity": "ajay-demo", "password": "correct horse battery"},
+        )
+        self.assertEqual(seller_login.status_code, 200)
+        self.csrf_token = seller_login.get_json()["csrfToken"]
+        seller_orders = self.client.get("/api/seller/orders").get_json()["orders"]
+        self.assertEqual(len(seller_orders), 1)
+        self.assertEqual(seller_orders[0]["customerEmail"], "buyer@example.com")
+        self.assertEqual(seller_orders[0]["sellerTotal"], 1499)
+
+    def test_product_listing_requires_login_and_rejects_invalid_stock(self):
+        product = {
+            "name": "Small vase",
+            "category": "home",
+            "price": 250,
+            "stock": 1,
+            "description": "Handmade ceramic vase.",
+        }
+        response = self.request_json("POST", "/api/seller/products", product)
+        self.assertEqual(response.status_code, 401)
+
+        self.assertEqual(self.register().status_code, 201)
+        product["stock"] = 0
+        response = self.request_json("POST", "/api/seller/products", product)
+        self.assertEqual(response.status_code, 400)
+
 
 if __name__ == "__main__":
     unittest.main()

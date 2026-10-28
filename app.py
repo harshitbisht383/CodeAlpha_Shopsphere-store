@@ -5,6 +5,7 @@ import secrets
 import sqlite3
 from datetime import timedelta
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from flask import Flask, g, jsonify, request, send_from_directory, session
 from werkzeug.security import check_password_hash, generate_password_hash
@@ -68,7 +69,10 @@ def init_database():
                 icon TEXT NOT NULL,
                 rating REAL NOT NULL,
                 description TEXT NOT NULL,
-                badge TEXT
+                badge TEXT,
+                seller_id INTEGER REFERENCES users(id),
+                stock INTEGER NOT NULL DEFAULT 99 CHECK(stock >= 0),
+                image_url TEXT
             );
             CREATE TABLE IF NOT EXISTS cart_items (
                 owner TEXT NOT NULL,
@@ -94,14 +98,35 @@ def init_database():
                 product_id TEXT NOT NULL,
                 product_name TEXT NOT NULL,
                 unit_price INTEGER NOT NULL,
-                quantity INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 99)
+                quantity INTEGER NOT NULL CHECK(quantity BETWEEN 1 AND 99),
+                seller_id INTEGER REFERENCES users(id)
             );
             """
         )
+        product_columns = {
+            row["name"] for row in database.execute("PRAGMA table_info(products)")
+        }
+        if "seller_id" not in product_columns:
+            database.execute(
+                "ALTER TABLE products ADD COLUMN seller_id INTEGER REFERENCES users(id)"
+            )
+        if "stock" not in product_columns:
+            database.execute(
+                "ALTER TABLE products ADD COLUMN stock INTEGER NOT NULL DEFAULT 99"
+            )
+        if "image_url" not in product_columns:
+            database.execute("ALTER TABLE products ADD COLUMN image_url TEXT")
+        order_item_columns = {
+            row["name"] for row in database.execute("PRAGMA table_info(order_items)")
+        }
+        if "seller_id" not in order_item_columns:
+            database.execute(
+                "ALTER TABLE order_items ADD COLUMN seller_id INTEGER REFERENCES users(id)"
+            )
         database.executemany(
             """
-            INSERT INTO products (id, name, category, price, old_price, icon, rating, description, badge)
-            VALUES (:id, :name, :category, :price, :oldPrice, :icon, :rating, :description, :badge)
+            INSERT INTO products (id, name, category, price, old_price, icon, rating, description, badge, stock)
+            VALUES (:id, :name, :category, :price, :oldPrice, :icon, :rating, :description, :badge, 99)
             ON CONFLICT(id) DO UPDATE SET
                 name = excluded.name,
                 category = excluded.category,
@@ -169,7 +194,7 @@ def cart_payload(owner=None):
     owner = owner or cart_owner()
     rows = get_database().execute(
         """
-        SELECT p.id, p.name, p.category, p.price, p.icon, ci.quantity
+        SELECT p.id, p.name, p.category, p.price, p.icon, p.stock, ci.quantity
         FROM cart_items ci
         JOIN products p ON p.id = ci.product_id
         WHERE ci.owner = ?
@@ -184,6 +209,7 @@ def cart_payload(owner=None):
             "category": row["category"],
             "price": row["price"],
             "icon": row["icon"],
+            "stock": row["stock"],
             "quantity": row["quantity"],
             "subtotal": row["price"] * row["quantity"],
         }
@@ -253,7 +279,7 @@ def bootstrap():
     csrf_token = session.setdefault("csrf_token", secrets.token_urlsafe(32))
     products = get_database().execute(
         """
-        SELECT id, name, category, price, old_price AS oldPrice, icon, rating, description, badge
+        SELECT id, name, category, price, old_price AS oldPrice, icon, rating, description, badge, stock, image_url AS imageUrl
         FROM products ORDER BY name COLLATE NOCASE
         """
     ).fetchall()
@@ -370,8 +396,18 @@ def add_cart_item():
     if type(quantity) is not int or not 1 <= quantity <= 99:
         return jsonify(error="Quantity must be between 1 and 99."), 400
     database = get_database()
-    if not database.execute("SELECT 1 FROM products WHERE id = ?", (product_id,)).fetchone():
+    product = database.execute(
+        "SELECT stock FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+    if not product:
         return jsonify(error="Product not found."), 404
+    current_quantity = database.execute(
+        "SELECT quantity FROM cart_items WHERE owner = ? AND product_id = ?",
+        (cart_owner(), product_id),
+    ).fetchone()
+    existing_quantity = current_quantity["quantity"] if current_quantity else 0
+    if existing_quantity + quantity > product["stock"]:
+        return jsonify(error="There is not enough stock available for this product."), 400
     database.execute(
         """
         INSERT INTO cart_items (owner, product_id, quantity) VALUES (?, ?, ?)
@@ -395,9 +431,25 @@ def update_cart_item(product_id):
     quantity = body.get("quantity")
     if type(quantity) is not int or not 1 <= quantity <= 99:
         return jsonify(error="Quantity must be between 1 and 99."), 400
+    owner = cart_owner()
+    existing = get_database().execute(
+        "SELECT 1 FROM cart_items WHERE owner = ? AND product_id = ?",
+        (owner, product_id),
+    ).fetchone()
+    if not existing:
+        return jsonify(error="Cart item not found."), 404
+    product = get_database().execute(
+        "SELECT stock FROM products WHERE id = ?", (product_id,)
+    ).fetchone()
+    if not product or quantity > product["stock"]:
+        return jsonify(error="There is not enough stock available for this product."), 400
     cursor = get_database().execute(
-        "UPDATE cart_items SET quantity = ? WHERE owner = ? AND product_id = ?",
-        (quantity, cart_owner(), product_id),
+        """
+        UPDATE cart_items SET quantity = ?
+        WHERE owner = ? AND product_id = ?
+            AND ? <= (SELECT stock FROM products WHERE id = ?)
+        """,
+        (quantity, owner, product_id, quantity, product_id),
     )
     get_database().commit()
     if cursor.rowcount == 0:
@@ -466,19 +518,29 @@ def checkout():
 
     database = get_database()
     owner = cart_owner()
-    items = database.execute(
-        """
-        SELECT p.id, p.name, p.price, ci.quantity
-        FROM cart_items ci JOIN products p ON p.id = ci.product_id
-        WHERE ci.owner = ?
-        """,
-        (owner,),
-    ).fetchall()
-    if not items:
-        return jsonify(error="Your cart is empty."), 400
-
-    total = sum(item["price"] * item["quantity"] for item in items)
     try:
+        database.execute("BEGIN IMMEDIATE")
+        items = database.execute(
+            """
+            SELECT p.id, p.name, p.price, p.stock, p.seller_id, ci.quantity
+            FROM cart_items ci JOIN products p ON p.id = ci.product_id
+            WHERE ci.owner = ?
+            """,
+            (owner,),
+        ).fetchall()
+        if not items:
+            database.rollback()
+            return jsonify(error="Your cart is empty."), 400
+        unavailable = [
+            item["name"] for item in items if item["quantity"] > item["stock"]
+        ]
+        if unavailable:
+            database.rollback()
+            return jsonify(
+                error="Not enough stock is available for: " + ", ".join(unavailable)
+            ), 409
+
+        total = sum(item["price"] * item["quantity"] for item in items)
         cursor = database.execute(
             """
             INSERT INTO orders
@@ -499,13 +561,24 @@ def checkout():
         order_id = cursor.lastrowid
         database.executemany(
             """
-            INSERT INTO order_items (order_id, product_id, product_name, unit_price, quantity)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO order_items (order_id, product_id, product_name, unit_price, quantity, seller_id)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
             [
-                (order_id, item["id"], item["name"], item["price"], item["quantity"])
+                (
+                    order_id,
+                    item["id"],
+                    item["name"],
+                    item["price"],
+                    item["quantity"],
+                    item["seller_id"],
+                )
                 for item in items
             ],
+        )
+        database.executemany(
+            "UPDATE products SET stock = stock - ? WHERE id = ?",
+            [(item["quantity"], item["id"]) for item in items],
         )
         database.execute("DELETE FROM cart_items WHERE owner = ?", (owner,))
         database.commit()
@@ -514,6 +587,105 @@ def checkout():
         app.logger.exception("Could not save checkout order")
         return jsonify(error="Could not save your order. Please try again."), 500
     return jsonify(orderId=order_id, total=total, cart=cart_payload(owner)), 201
+
+
+@app.post("/api/seller/products")
+def create_seller_product():
+    csrf_error = require_csrf()
+    if csrf_error:
+        return csrf_error
+    user = current_user()
+    if not user:
+        return jsonify(error="Sign in to list a product."), 401
+    body, error = json_body()
+    if error:
+        return error
+
+    name = str(body.get("name", "")).strip()
+    category = str(body.get("category", "")).strip().lower()
+    description = str(body.get("description", "")).strip()
+    image_url = str(body.get("imageUrl", "")).strip()
+    price = body.get("price")
+    stock = body.get("stock")
+    allowed_categories = {"electronics", "fashion", "home", "accessories", "shoes"}
+    if not name or len(name) > 120:
+        return jsonify(error="Product name must be between 1 and 120 characters."), 400
+    if category not in allowed_categories:
+        return jsonify(error="Choose a valid product category."), 400
+    if type(price) is not int or not 1 <= price <= 10_000_000:
+        return jsonify(error="Price must be a whole number between ₹1 and ₹10,000,000."), 400
+    if type(stock) is not int or not 1 <= stock <= 9999:
+        return jsonify(error="Stock must be a whole number between 1 and 9,999."), 400
+    if not description or len(description) > 2000:
+        return jsonify(error="Description must be between 1 and 2,000 characters."), 400
+    if image_url:
+        try:
+            parsed_image_url = urlsplit(image_url)
+        except ValueError:
+            parsed_image_url = None
+        if (
+            len(image_url) > 2048
+            or parsed_image_url is None
+            or parsed_image_url.scheme.lower() != "https"
+            or not parsed_image_url.hostname
+        ):
+            return jsonify(error="Product image URL must be a valid HTTPS URL."), 400
+
+    product_id = re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")[:40]
+    product_id = (product_id or "product") + "-" + secrets.token_hex(6)
+    try:
+        get_database().execute(
+            """
+            INSERT INTO products
+                (id, name, category, price, icon, rating, description, seller_id, stock, image_url)
+            VALUES (?, ?, ?, ?, '📦', 0, ?, ?, ?, ?)
+            """,
+            (product_id, name, category, price, description, user["id"], stock, image_url or None),
+        )
+        get_database().commit()
+    except sqlite3.Error:
+        get_database().rollback()
+        app.logger.exception("Could not save seller product")
+        return jsonify(error="Could not list your product. Please try again."), 500
+    return jsonify(productId=product_id), 201
+
+
+@app.get("/api/seller/products")
+def list_seller_products():
+    user = current_user()
+    if not user:
+        return jsonify(error="Sign in to manage your products."), 401
+    rows = get_database().execute(
+        """
+        SELECT id, name, category, price, stock, image_url AS imageUrl
+        FROM products WHERE seller_id = ? ORDER BY name COLLATE NOCASE
+        """,
+        (user["id"],),
+    ).fetchall()
+    return jsonify(products=[dict(row) for row in rows])
+
+
+@app.get("/api/seller/orders")
+def list_seller_orders():
+    user = current_user()
+    if not user:
+        return jsonify(error="Sign in to view orders for your products."), 401
+    rows = get_database().execute(
+        """
+        SELECT o.id AS orderId, o.customer_name AS customerName,
+            o.customer_email AS customerEmail, o.address,
+            SUM(oi.unit_price * oi.quantity) AS sellerTotal,
+            GROUP_CONCAT(oi.product_name || ' × ' || oi.quantity, ', ') AS items,
+            o.created_at AS createdAt
+        FROM order_items oi
+        JOIN orders o ON o.id = oi.order_id
+        WHERE oi.seller_id = ?
+        GROUP BY o.id
+        ORDER BY o.id DESC
+        """,
+        (user["id"],),
+    ).fetchall()
+    return jsonify(orders=[dict(row) for row in rows])
 
 
 @app.get("/api/orders")

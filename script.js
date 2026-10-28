@@ -74,6 +74,7 @@ async function apiRequest(path, options = {}) {
 function updateAccountNavigation() {
     const loginButton = getElement("loginAction");
     const registerButton = getElement("registerAction");
+    const sellerButton = getElement("sellerAction");
     const navActions = document.querySelector(".nav-actions");
     let logoutButton = getElement("logoutAction");
 
@@ -82,6 +83,9 @@ function updateAccountNavigation() {
     }
     if (registerButton) {
         registerButton.hidden = Boolean(currentUser);
+    }
+    if (sellerButton) {
+        sellerButton.hidden = !currentUser;
     }
 
     if (currentUser && navActions && !logoutButton) {
@@ -152,17 +156,17 @@ function filterProducts() {
     let visibleCount = 0;
 
     products.forEach(product => {
-        const name = (
+        const searchableText = [
             product.dataset.name ||
             product.querySelector("h3")?.textContent ||
-            ""
-        ).toLowerCase();
+            "",
+            product.dataset.category || "",
+            product.dataset.description || ""
+        ].join(" ").toLowerCase();
 
-        const category = (
-            product.dataset.category || ""
-        ).toLowerCase();
+        const category = (product.dataset.category || "").toLowerCase();
 
-        const matchesSearch = name.includes(searchTerm);
+        const matchesSearch = searchableText.includes(searchTerm);
 
         const matchesCategory =
             selectedCategory === "all" ||
@@ -225,6 +229,7 @@ function renderAdditionalProducts(products) {
         card.className = "product-card";
         card.dataset.name = product.name.toLowerCase();
         card.dataset.category = product.category;
+        card.dataset.description = product.description.toLowerCase();
         card.dataset.price = product.price;
         card.dataset.productId = product.id;
 
@@ -236,16 +241,31 @@ function renderAdditionalProducts(products) {
             card.appendChild(badge);
         }
 
-        const image = document.createElement("div");
+        const image = product.imageUrl
+            ? document.createElement("img")
+            : document.createElement("div");
         image.className = "product-image product-image-" +
             (product.id === "wireless-headphones" ? "audio" :
                 product.id === "everyday-backpack" ? "bag" :
                     product.id === "classic-cotton-tee" ? "shirt" :
                         product.id === "everyday-sneakers" ? "shoes" :
                             product.id === "desk-plant-pot" ? "home" : product.category);
-        image.setAttribute("role", "img");
-        image.setAttribute("aria-label", product.name);
-        image.textContent = product.icon;
+        if (product.imageUrl) {
+            image.src = product.imageUrl;
+            image.alt = product.name;
+            image.addEventListener("error", function () {
+                const fallback = document.createElement("div");
+                fallback.className = image.className;
+                fallback.setAttribute("role", "img");
+                fallback.setAttribute("aria-label", product.name);
+                fallback.textContent = product.icon;
+                image.replaceWith(fallback);
+            }, { once: true });
+        } else {
+            image.setAttribute("role", "img");
+            image.setAttribute("aria-label", product.name);
+            image.textContent = product.icon;
+        }
 
         const category = document.createElement("p");
         category.className = "product-category";
@@ -282,10 +302,17 @@ function renderAdditionalProducts(products) {
         const actions = document.createElement("div");
         actions.className = "product-actions";
 
+        const stockNote = document.createElement("p");
+        stockNote.className = "product-stock";
+        stockNote.textContent = product.stock > 0
+            ? product.stock + " available"
+            : "Out of stock";
+
         const addButton = document.createElement("button");
         addButton.type = "button";
         addButton.className = "btn";
         addButton.textContent = "Add to cart";
+        addButton.disabled = product.stock < 1;
         addButton.addEventListener("click", function () {
             addToCart(product.id);
         });
@@ -294,12 +321,13 @@ function renderAdditionalProducts(products) {
         buyButton.type = "button";
         buyButton.className = "btn buy-now";
         buyButton.textContent = "Buy now";
+        buyButton.disabled = product.stock < 1;
         buyButton.addEventListener("click", function () {
             buyNow(product.id);
         });
 
         actions.append(addButton, buyButton);
-        card.append(image, category, title, description, rating, price, actions);
+        card.append(image, category, title, description, rating, price, stockNote, actions);
         productGrid.appendChild(card);
     });
 }
@@ -517,9 +545,16 @@ function showSection(sectionId) {
     const sectionIds = [
         "cart",
         "checkout",
+        "seller",
         "login",
         "register"
     ];
+
+    if (sectionId === "seller" && !currentUser) {
+        showSection("login");
+        showMessage(getElement("loginMessage"), "Sign in or create an account to list products.", "info");
+        return;
+    }
 
     sectionIds.forEach(id => {
         const section = getElement(id);
@@ -531,13 +566,16 @@ function showSection(sectionId) {
     });
 
     document.querySelectorAll(
-        "#home > section:not(#cart):not(#checkout):not(#login):not(#register)"
+        "#home > section:not(#cart):not(#checkout):not(#seller):not(#login):not(#register)"
     ).forEach(section => {
         section.hidden = sectionId !== "home";
     });
 
     if (sectionId === "cart" || sectionId === "checkout") {
         renderDemoCart();
+    }
+    if (sectionId === "seller") {
+        loadSellerDashboard();
     }
 
     if (sectionId !== "checkout") {
@@ -788,14 +826,93 @@ async function handleDemoCheckout(event) {
         });
         showMessage(
             orderMessage,
-            "Order #" + result.orderId + " placed successfully. Total: ₹" +
-            formatPrice(result.total) + ". Your order has been saved.",
+            "Demo order #" + result.orderId + " saved. Total: ₹" +
+            formatPrice(result.total) + ". No payment was collected and delivery was not arranged by this app.",
             "success"
         );
         currentGpsPosition = null;
         event.currentTarget.reset();
     } catch (error) {
         showMessage(orderMessage, error.message, "error");
+    }
+}
+
+function addSellerTextRow(container, titleText, detailsText) {
+    const row = document.createElement("article");
+    row.className = "seller-list-item";
+    const title = document.createElement("strong");
+    title.textContent = titleText;
+    const details = document.createElement("p");
+    details.textContent = detailsText;
+    row.append(title, details);
+    container.appendChild(row);
+}
+
+async function loadSellerDashboard() {
+    const productList = getElement("sellerProducts");
+    const orderList = getElement("sellerOrders");
+    if (!productList || !orderList) return;
+    productList.replaceChildren();
+    orderList.replaceChildren();
+
+    try {
+        const [productsResult, ordersResult] = await Promise.all([
+            apiRequest("/api/seller/products"),
+            apiRequest("/api/seller/orders")
+        ]);
+        if (productsResult.products.length === 0) {
+            addSellerTextRow(productList, "No products listed yet", "Use the form above to add your first product.");
+        }
+        productsResult.products.forEach(product => {
+            addSellerTextRow(
+                productList,
+                product.name,
+                "₹" + formatPrice(product.price) + " · " + product.stock + " in stock"
+            );
+        });
+        if (ordersResult.orders.length === 0) {
+            addSellerTextRow(orderList, "No orders yet", "Orders placed for your products will appear here.");
+        }
+        ordersResult.orders.forEach(order => {
+            addSellerTextRow(
+                orderList,
+                "Order #" + order.orderId + " · ₹" + formatPrice(order.sellerTotal),
+                order.items + " · " + order.customerName + " · " + order.customerEmail +
+                    " · " + order.address + " · " + order.createdAt
+            );
+        });
+    } catch (error) {
+        addSellerTextRow(productList, "Could not load seller dashboard", error.message);
+    }
+}
+
+async function handleSellerProductSubmit(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    if (!form.reportValidity()) return;
+
+    const message = getElement("sellerProductMessage");
+    const product = {
+        name: getElement("sellerProductName").value.trim(),
+        category: getElement("sellerProductCategory").value,
+        price: Number(getElement("sellerProductPrice").value),
+        stock: Number(getElement("sellerProductStock").value),
+        description: getElement("sellerProductDescription").value.trim(),
+        imageUrl: getElement("sellerProductImage").value.trim()
+    };
+    try {
+        await apiRequest("/api/seller/products", {
+            method: "POST",
+            body: JSON.stringify(product)
+        });
+        form.reset();
+        const bootstrap = await apiRequest("/api/bootstrap");
+        renderAdditionalProducts(bootstrap.products);
+        filterProducts();
+        showMessage(message, "Product listed and now visible in the store.", "success");
+        await loadSellerDashboard();
+    } catch (error) {
+        showMessage(message, error.message, "error");
     }
 }
 
@@ -981,6 +1098,11 @@ document.addEventListener("DOMContentLoaded", async function () {
             "submit",
             handleDemoRegister
         );
+    }
+
+    const sellerProductForm = getElement("sellerProductForm");
+    if (sellerProductForm) {
+        sellerProductForm.addEventListener("submit", handleSellerProductSubmit);
     }
 
     /*
