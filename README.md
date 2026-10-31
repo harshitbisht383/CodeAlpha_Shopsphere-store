@@ -2,6 +2,8 @@
 
 A small online store demo built with Flask, SQLite, HTML, CSS, and JavaScript.
 
+**Live website:** [Open ShopSphere](https://shopsphere-store.onrender.com)
+
 Visitors must sign in before the storefront is shown. Sign in with the Gmail address, mobile number, and password used to create the account. New users can create an account with their Gmail address, mobile number, and a password using the link on the sign-in screen.
 
 Registered users can list products from the **Sell a product** dashboard. Listings include a category, rupee price, stock quantity, description, and optional HTTPS image URL. Buyers can add available items to their cart and submit an order; sellers can view the items, buyer contact details, and delivery address for orders containing their products.
