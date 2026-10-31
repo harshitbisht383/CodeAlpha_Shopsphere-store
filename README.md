@@ -2,16 +2,7 @@
 
 A small online store demo built with Flask, SQLite, HTML, CSS, and JavaScript.
 
-Visitors must sign in before the storefront is shown. The sign-in page offers MSG91 SMS OTP and a password fallback. OTP send/verify endpoints are implemented, but SMS remains disabled until `MSG91_AUTH_KEY` and `MSG91_TEMPLATE_ID` are configured. The server enforces a 45-second OTP validity and resend wait.
-
-### Configure MSG91 OTP
-
-1. In MSG91, create an OTP template containing `##OTP##` and copy its template ID and API auth key.
-2. Set `MSG91_AUTH_KEY` and `MSG91_TEMPLATE_ID` in the hosting service's environment variables. Never put these credentials in frontend code or commit them.
-3. The app asks MSG91 for a 6-digit code. MSG91 requires at least a 1-minute provider expiry; ShopSphere separately enforces a 45-second server-side validity and resend wait, so codes are rejected by ShopSphere after 45 seconds.
-4. On Render, set the two `MSG91_*` variables in the service Environment settings, then redeploy. The `render.yaml` Blueprint asks for these secret values during service creation.
-
-Test SMS delivery with your own phone first. SMS charges and provider/template approvals are controlled by MSG91. Password sign-in remains available if OTP setup is missing or the provider is unavailable.
+Visitors must sign in before the storefront is shown. Sign in with the Gmail address, mobile number, and password used to create the account. New users can create an account with their Gmail address, mobile number, and a password using the link on the sign-in screen.
 
 Registered users can list products from the **Sell a product** dashboard. Listings include a category, rupee price, stock quantity, description, and optional HTTPS image URL. Buyers can add available items to their cart and submit an order; sellers can view the items, buyer contact details, and delivery address for orders containing their products.
 
@@ -35,7 +26,7 @@ python app.py
 
 Open <http://127.0.0.1:8000/> in your browser. Keep the terminal running while you use the store.
 
-The SQLite database is created locally when the app starts. It is intentionally excluded from Git; the product catalog is loaded from `products.json`.
+The SQLite database is created locally when the app starts. It is intentionally excluded from Git; the product catalog, including its demo product photos, is loaded from `products.json`. Demo catalog photos are hosted by Unsplash and require an internet connection to display.
 
 ## Deploy a free demo on Render
 

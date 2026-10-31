@@ -9,7 +9,7 @@ function getElement(id) {
     return document.getElementById(id);
 }
 
-async function loadAuthenticatedStore() {
+async function loadStore() {
     const bootstrap = await apiRequest("/api/bootstrap");
     renderAdditionalProducts(bootstrap.products);
     serverCart = bootstrap.cart;
@@ -29,8 +29,6 @@ let currentUser = null;
 let currentGpsPosition = null;
 let pendingBuyProductId = null;
 let pendingCheckout = false;
-let otpCountdownInterval = null;
-let otpExpiresAt = 0;
 
 async function apiRequest(path, options = {}) {
     const headers = new Headers(options.headers || {});
@@ -106,19 +104,14 @@ function updateAccountNavigation() {
         logoutButton.type = "button";
         logoutButton.id = "logoutAction";
         logoutButton.innerHTML = "<small>Signed in as</small><strong></strong>";
-        logoutButton.querySelector("strong").textContent = currentUser.username;
+        logoutButton.querySelector("strong").textContent = currentUser.email;
         logoutButton.addEventListener("click", async function () {
             try {
                 const result = await apiRequest("/api/logout", { method: "POST", body: "{}" });
                 currentUser = null;
-                if (otpCountdownInterval !== null) {
-                    window.clearInterval(otpCountdownInterval);
-                    otpCountdownInterval = null;
-                }
                 document.body.classList.add("auth-locked");
                 csrfToken = result.csrfToken;
-                serverCart = { items: [], count: 0, total: 0 };
-                getElement("productGrid")?.replaceChildren();
+                serverCart = result.cart;
                 logoutButton.remove();
                 updateAccountNavigation();
                 renderDemoCart();
@@ -132,7 +125,7 @@ function updateAccountNavigation() {
         });
         navActions.insertBefore(logoutButton, getElement("cartCount").closest("button"));
     } else if (currentUser && logoutButton) {
-        logoutButton.querySelector("strong").textContent = currentUser.username;
+        logoutButton.querySelector("strong").textContent = currentUser.email;
     } else if (!currentUser && logoutButton) {
         logoutButton.remove();
     }
@@ -887,18 +880,17 @@ async function handleDemoLogin(event) {
     }
 
     const message = getElement("loginMessage");
-    const identity = getElement("loginEmail").value.trim();
-    const phone = getElement("loginPhone").value.trim();
+    const email = getElement("loginEmail").value.trim();
     const password = getElement("loginPassword").value;
 
     try {
         await apiRequest("/api/login", {
             method: "POST",
-            body: JSON.stringify({ identity, phone, password })
+            body: JSON.stringify({ email, password })
         });
-        await loadAuthenticatedStore();
+        await loadStore();
         form.reset();
-        showMessage(message, "Welcome back, " + currentUser.username + ".", "success");
+        showMessage(message, "Welcome back, " + currentUser.email + ".", "success");
         if (pendingBuyProductId || pendingCheckout) {
             continuePendingPurchase();
         } else {
@@ -906,116 +898,6 @@ async function handleDemoLogin(event) {
         }
     } catch (error) {
         showMessage(message, error.message, "error");
-    }
-}
-
-function updateOtpCountdown(seconds) {
-    if (otpCountdownInterval !== null) {
-        window.clearInterval(otpCountdownInterval);
-    }
-    otpExpiresAt = Date.now() + seconds * 1000;
-    const countdown = getElement("otpCountdown");
-    const resendButton = getElement("resendOtpButton");
-    const showTime = function () {
-        const remaining = Math.max(0, Math.ceil((otpExpiresAt - Date.now()) / 1000));
-        if (countdown) {
-            countdown.textContent = remaining
-                ? "Code expires in " + remaining + " seconds."
-                : "Code expired. Request a new OTP.";
-        }
-        if (resendButton) {
-            resendButton.disabled = remaining > 0;
-        }
-        if (remaining === 0 && otpCountdownInterval !== null) {
-            window.clearInterval(otpCountdownInterval);
-            otpCountdownInterval = null;
-        }
-    };
-    showTime();
-    otpCountdownInterval = window.setInterval(showTime, 250);
-}
-
-async function requestLoginOtp(event) {
-    if (event) {
-        event.preventDefault();
-        const contactFields = [
-            getElement("otpLoginEmail"),
-            getElement("otpLoginPhone")
-        ];
-        for (const field of contactFields) {
-            if (!field.reportValidity()) return;
-        }
-    }
-    const email = getElement("otpLoginEmail").value.trim();
-    const phone = getElement("otpLoginPhone").value.trim();
-    const message = getElement("otpMessage");
-    const sendButton = getElement("sendOtpButton");
-    const resendButton = getElement("resendOtpButton");
-    sendButton.disabled = true;
-    resendButton.disabled = true;
-
-    try {
-        const result = await apiRequest("/api/auth/otp/send", {
-            method: "POST",
-            body: JSON.stringify({ email, phone })
-        });
-        getElement("otpCodeGroup").hidden = false;
-        getElement("loginOtp").required = true;
-        getElement("verifyOtpButton").hidden = false;
-        sendButton.hidden = true;
-        resendButton.hidden = false;
-        showMessage(message, "OTP sent. Enter it before the 45-second timer ends.", "success");
-        updateOtpCountdown(result.expiresIn);
-    } catch (error) {
-        sendButton.disabled = false;
-        resendButton.disabled = false;
-        if (error.retryAfter) {
-            resendButton.hidden = false;
-            sendButton.hidden = true;
-            getElement("otpCodeGroup").hidden = false;
-            getElement("loginOtp").required = true;
-            getElement("verifyOtpButton").hidden = false;
-            updateOtpCountdown(error.retryAfter);
-        }
-        showMessage(message, error.message, "error");
-    }
-}
-
-async function verifyLoginOtp() {
-    const form = getElement("otpLoginForm");
-    if (!form.reportValidity()) return;
-    const message = getElement("otpMessage");
-    const verifyButton = getElement("verifyOtpButton");
-    verifyButton.disabled = true;
-    try {
-        await apiRequest("/api/auth/otp/verify", {
-            method: "POST",
-            body: JSON.stringify({
-                email: getElement("otpLoginEmail").value.trim(),
-                phone: getElement("otpLoginPhone").value.trim(),
-                otp: getElement("loginOtp").value.trim()
-            })
-        });
-        await loadAuthenticatedStore();
-        form.reset();
-        if (otpCountdownInterval !== null) {
-            window.clearInterval(otpCountdownInterval);
-            otpCountdownInterval = null;
-        }
-        getElement("otpCodeGroup").hidden = true;
-        getElement("verifyOtpButton").hidden = true;
-        getElement("resendOtpButton").hidden = true;
-        getElement("sendOtpButton").hidden = false;
-        showMessage(message, "Your mobile number is verified. Welcome to ShopSphere.", "success");
-        if (pendingBuyProductId || pendingCheckout) {
-            continuePendingPurchase();
-        } else {
-            showSection("home");
-        }
-    } catch (error) {
-        showMessage(message, error.message, "error");
-    } finally {
-        verifyButton.disabled = false;
     }
 }
 
@@ -1051,15 +933,14 @@ async function handleDemoRegister(event) {
         await apiRequest("/api/register", {
             method: "POST",
             body: JSON.stringify({
-                username: getElement("registerUsername").value.trim(),
                 email: getElement("registerEmail").value.trim(),
                 phone: getElement("registerPhone").value.trim(),
                 password: password.value
             })
         });
-        await loadAuthenticatedStore();
+        await loadStore();
         form.reset();
-        showMessage(message, "Account created. Welcome, " + currentUser.username + "!", "success");
+        showMessage(message, "Account created. Welcome, " + currentUser.email + "!", "success");
         if (pendingBuyProductId || pendingCheckout) {
             continuePendingPurchase();
         } else {
@@ -1068,6 +949,32 @@ async function handleDemoRegister(event) {
     } catch (error) {
         showMessage(message, error.message, "error");
     }
+}
+
+function initializePasswordToggles() {
+    document.querySelectorAll("[data-password-toggle]").forEach(button => {
+        const passwordInput = getElement(button.dataset.passwordToggle);
+        if (!passwordInput) return;
+
+        const setVisibility = visible => {
+            passwordInput.type = visible ? "text" : "password";
+            button.textContent = visible ? "Hide" : "Show";
+            button.setAttribute("aria-pressed", String(visible));
+            button.setAttribute(
+                "aria-label",
+                (visible ? "Hide " : "Show ") +
+                    (passwordInput.labels[0]?.textContent.toLowerCase() || "password")
+            );
+        };
+
+        button.addEventListener("click", () => {
+            setVisibility(passwordInput.type === "password");
+        });
+        passwordInput.form?.addEventListener("reset", () => {
+            setVisibility(false);
+        });
+        setVisibility(false);
+    });
 }
 
 
@@ -1155,18 +1062,12 @@ document.addEventListener("DOMContentLoaded", async function () {
     }
 
     const loginForm = getElement("loginForm");
-    const otpLoginForm = getElement("otpLoginForm");
 
     if (loginForm) {
         loginForm.addEventListener(
             "submit",
             handleDemoLogin
         );
-    }
-    if (otpLoginForm) {
-        otpLoginForm.addEventListener("submit", requestLoginOtp);
-        getElement("resendOtpButton").addEventListener("click", requestLoginOtp);
-        getElement("verifyOtpButton").addEventListener("click", verifyLoginOtp);
     }
 
     const registerForm = getElement("registerForm");
@@ -1177,6 +1078,8 @@ document.addEventListener("DOMContentLoaded", async function () {
             handleDemoRegister
         );
     }
+
+    initializePasswordToggles();
 
     const sellerProductForm = getElement("sellerProductForm");
     if (sellerProductForm) {

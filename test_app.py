@@ -1,9 +1,6 @@
-import json
-import os
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
 
 import app as shopsphere
 from werkzeug.security import check_password_hash
@@ -39,25 +36,11 @@ class ShopSphereApiTests(unittest.TestCase):
         finally:
             database.close()
 
-    def provider_response(self, payload):
-        class FakeResponse:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, _exception_type, _exception_value, _traceback):
-                return None
-
-            def read(self):
-                return json.dumps(payload).encode("utf-8")
-
-        return FakeResponse()
-
     def register(self):
         response = self.request_json(
             "POST",
             "/api/register",
             {
-                "username": "ajay-demo",
                 "email": "ajay@example.com",
                 "phone": "+91 98765 43210",
                 "password": "correct horse battery",
@@ -69,10 +52,16 @@ class ShopSphereApiTests(unittest.TestCase):
 
     def test_catalog_and_csrf_protection(self):
         bootstrap = self.client.get("/api/bootstrap").get_json()
+        self.assertIsNone(bootstrap["user"])
         self.assertEqual(bootstrap["products"], [])
+        self.assertEqual(bootstrap["cart"], {"items": [], "count": 0, "total": 0})
         self.assertEqual(self.register().status_code, 201)
         bootstrap = self.client.get("/api/bootstrap").get_json()
         self.assertEqual(len(bootstrap["products"]), 50)
+        self.assertTrue(
+            all(product["imageUrl"].startswith("https://images.unsplash.com/")
+                for product in bootstrap["products"])
+        )
         response = self.request_json(
             "POST",
             "/api/cart",
@@ -94,16 +83,16 @@ class ShopSphereApiTests(unittest.TestCase):
         register_response = self.register()
         self.assertEqual(register_response.status_code, 201)
         self.assertEqual(
-            register_response.get_json()["user"]["username"],
-            "ajay-demo",
+            register_response.get_json()["user"]["email"],
+            "ajay@example.com",
         )
         user_cart = self.client.get("/api/cart").get_json()
         self.assertEqual(user_cart["count"], 1)
         self.assertEqual(user_cart["total"], 1999)
 
         row = self.query_one(
-            "SELECT password_hash FROM users WHERE username = ?",
-            ("ajay-demo",),
+            "SELECT password_hash FROM users WHERE email = ?",
+            ("ajay@example.com",),
         )
         self.assertTrue(check_password_hash(row["password_hash"], "correct horse battery"))
         self.assertNotEqual(row["password_hash"], "correct horse battery")
@@ -175,40 +164,53 @@ class ShopSphereApiTests(unittest.TestCase):
             "POST",
             "/api/login",
             {
-                "identity": "ajay@example.com",
+                "email": "ajay@example.com",
                 "phone": "+919876543210",
                 "password": "correct horse battery",
             },
         )
         self.assertEqual(login.status_code, 200)
-        self.assertEqual(login.get_json()["user"]["username"], "ajay-demo")
+        self.assertEqual(login.get_json()["user"]["email"], "ajay@example.com")
         self.assertEqual(self.client.get("/api/orders").status_code, 200)
 
-    def test_password_login_requires_matching_mobile_when_supplied(self):
+    def test_password_login_checks_email_and_password_without_mobile(self):
         self.assertEqual(self.register().status_code, 201)
         self.request_json("POST", "/api/logout", {})
         self.csrf_token = self.client.get("/api/bootstrap").get_json()["csrfToken"]
-        wrong_phone = self.request_json(
+        correct_credentials = self.request_json(
             "POST",
             "/api/login",
             {
-                "identity": "ajay@example.com",
-                "phone": "+919876543211",
+                "email": "  AJAY@EXAMPLE.COM ",
                 "password": "correct horse battery",
             },
         )
-        self.assertEqual(wrong_phone.status_code, 401)
-        correct_phone = self.request_json(
+        self.assertEqual(correct_credentials.status_code, 200)
+        self.assertEqual(correct_credentials.get_json()["user"]["email"], "ajay@example.com")
+
+        self.request_json("POST", "/api/logout", {})
+        self.csrf_token = self.client.get("/api/bootstrap").get_json()["csrfToken"]
+        wrong_password = self.request_json(
             "POST",
             "/api/login",
             {
-                "identity": "ajay@example.com",
-                "phone": "+91 98765 43210",
+                "email": "ajay@example.com",
+                "password": "incorrect password",
+            },
+        )
+        self.assertEqual(wrong_password.status_code, 401)
+
+        self.request_json("POST", "/api/logout", {})
+        self.csrf_token = self.client.get("/api/bootstrap").get_json()["csrfToken"]
+        unknown_email = self.request_json(
+            "POST",
+            "/api/login",
+            {
+                "email": "unknown@example.com",
                 "password": "correct horse battery",
             },
         )
-        self.assertEqual(correct_phone.status_code, 200)
-        self.assertEqual(correct_phone.get_json()["user"]["phone"], "+919876543210")
+        self.assertEqual(unknown_email.status_code, 401)
 
     def test_registration_rejects_invalid_mobile_number(self):
         response = self.request_json(
@@ -223,158 +225,28 @@ class ShopSphereApiTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 400)
 
-    def test_otp_login_auto_creates_account_and_enforces_45_second_expiry(self):
-        with patch.dict(
-            os.environ,
-            {"MSG91_AUTH_KEY": "test-auth-key", "MSG91_TEMPLATE_ID": "test-template"},
-        ), patch.object(
-            shopsphere,
-            "urlopen",
-            side_effect=[
-                self.provider_response({"type": "success", "request_id": "send-1"}),
-                self.provider_response({"type": "success", "message": "OTP verified success"}),
-            ],
-        ) as provider:
-            sent = self.request_json(
-                "POST",
-                "/api/auth/otp/send",
-                {"email": "otp-shopper@example.com", "phone": "9876543210"},
-            )
-            self.assertEqual(sent.status_code, 200)
-            self.assertEqual(sent.get_json()["expiresIn"], 45)
-            self.assertEqual(sent.get_json()["resendAfter"], 45)
-
-            send_request = provider.call_args_list[0].args[0]
-            self.assertEqual(send_request.method, "POST")
-            self.assertIn("otp_expiry=1", send_request.full_url)
-            self.assertIn("otp_length=6", send_request.full_url)
-            self.assertIn("mobile=919876543210", send_request.full_url)
-            self.assertEqual(send_request.get_header("Authkey"), "test-auth-key")
-
-            response = self.request_json(
-                "POST",
-                "/api/auth/otp/verify",
-                {
-                    "email": "otp-shopper@example.com",
-                    "phone": "+91 9876543210",
-                    "otp": "123456",
-                },
-            )
-            self.assertEqual(response.status_code, 200)
-            verify_request = provider.call_args_list[1].args[0]
-            self.assertEqual(verify_request.method, "GET")
-            self.assertIn("otp=123456", verify_request.full_url)
-            self.assertEqual(response.get_json()["user"]["email"], "otp-shopper@example.com")
-            self.assertEqual(response.get_json()["user"]["phone"], "+919876543210")
-            self.assertEqual(len(self.client.get("/api/bootstrap").get_json()["products"]), 50)
-
-    def test_otp_login_requires_provider_credentials_and_resend_waits_45_seconds(self):
-        with patch.dict(os.environ, {"MSG91_AUTH_KEY": "", "MSG91_TEMPLATE_ID": ""}):
-            unavailable = self.request_json(
-                "POST",
-                "/api/auth/otp/send",
-                {"email": "otp-shopper@example.com", "phone": "9876543210"},
-            )
-        self.assertEqual(unavailable.status_code, 503)
-
-        with patch.dict(
-            os.environ,
-            {"MSG91_AUTH_KEY": "test-auth-key", "MSG91_TEMPLATE_ID": "test-template"},
-        ), patch.object(
-            shopsphere,
-            "urlopen",
-            return_value=self.provider_response({"type": "success", "request_id": "send-1"}),
-        ) as provider:
-            first = self.request_json(
-                "POST",
-                "/api/auth/otp/send",
-                {"email": "otp-shopper@example.com", "phone": "9876543210"},
-            )
-            second = self.request_json(
-                "POST",
-                "/api/auth/otp/send",
-                {"email": "otp-shopper@example.com", "phone": "9876543210"},
-            )
-        self.assertEqual(first.status_code, 200)
-        self.assertEqual(second.status_code, 429)
-        self.assertEqual(second.get_json()["retryAfter"], 45)
-        self.assertEqual(provider.call_count, 1)
-
-    def test_otp_verification_rejects_expired_challenge(self):
-        with patch.dict(
-            os.environ,
-            {"MSG91_AUTH_KEY": "test-auth-key", "MSG91_TEMPLATE_ID": "test-template"},
-        ), patch.object(
-            shopsphere,
-            "urlopen",
-            return_value=self.provider_response({"type": "success", "request_id": "send-1"}),
-        ):
-            sent = self.request_json(
-                "POST",
-                "/api/auth/otp/send",
-                {"email": "otp-shopper@example.com", "phone": "9876543210"},
-            )
-        self.assertEqual(sent.status_code, 200)
+    def test_otp_endpoints_and_legacy_challenges_are_removed(self):
         database = shopsphere.connect_database()
         try:
             database.execute(
-                "UPDATE otp_challenges SET expires_at = 0 WHERE phone = ?",
-                ("+919876543210",),
+                "CREATE TABLE otp_challenges (phone TEXT PRIMARY KEY)"
             )
             database.commit()
         finally:
             database.close()
+        shopsphere.init_database()
 
-        with patch.object(shopsphere, "urlopen") as provider:
-            expired = self.request_json(
-                "POST",
-                "/api/auth/otp/verify",
-                {
-                    "email": "otp-shopper@example.com",
-                    "phone": "9876543210",
-                    "otp": "123456",
-                },
-            )
-        self.assertEqual(expired.status_code, 410)
-        provider.assert_not_called()
-
-    def test_otp_sends_are_limited_to_five_per_phone_per_hour(self):
-        response_payloads = [
-            self.provider_response({"type": "success", "request_id": str(index)})
-            for index in range(5)
-        ]
-        with patch.dict(
-            os.environ,
-            {"MSG91_AUTH_KEY": "test-auth-key", "MSG91_TEMPLATE_ID": "test-template"},
-        ), patch.object(
-            shopsphere,
-            "urlopen",
-            side_effect=response_payloads,
-        ) as provider:
-            for _ in range(5):
-                result = self.request_json(
-                    "POST",
-                    "/api/auth/otp/send",
-                    {"email": "otp-shopper@example.com", "phone": "9876543210"},
-                )
-                self.assertEqual(result.status_code, 200)
-                database = shopsphere.connect_database()
-                try:
-                    database.execute(
-                        "UPDATE otp_challenges SET resend_at = 0 WHERE phone = ?",
-                        ("+919876543210",),
-                    )
-                    database.commit()
-                finally:
-                    database.close()
-
-            blocked = self.request_json(
-                "POST",
-                "/api/auth/otp/send",
-                {"email": "otp-shopper@example.com", "phone": "9876543210"},
-            )
-        self.assertEqual(blocked.status_code, 429)
-        self.assertEqual(provider.call_count, 5)
+        response = self.request_json(
+            "POST",
+            "/api/auth/otp/send",
+            {"email": "ajay@example.com", "phone": "+919876543210"},
+        )
+        self.assertEqual(response.status_code, 405)
+        table = self.query_one(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name = ?",
+            ("otp_challenges",),
+        )
+        self.assertIsNone(table)
 
     def test_checkout_rejects_invalid_location_and_empty_cart(self):
         self.assertEqual(self.register().status_code, 201)
@@ -493,7 +365,11 @@ class ShopSphereApiTests(unittest.TestCase):
         seller_login = self.request_json(
             "POST",
             "/api/login",
-            {"identity": "ajay-demo", "password": "correct horse battery"},
+            {
+                "email": "ajay@example.com",
+                "phone": "+919876543210",
+                "password": "correct horse battery",
+            },
         )
         self.assertEqual(seller_login.status_code, 200)
         self.csrf_token = seller_login.get_json()["csrfToken"]

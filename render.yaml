@@ -15,7 +15,3 @@ services:
         value: "true"
       - key: SHOPSPHERE_DATABASE
         value: /tmp/shopsphere.db
-      - key: MSG91_AUTH_KEY
-        sync: false
-      - key: MSG91_TEMPLATE_ID
-        sync: false

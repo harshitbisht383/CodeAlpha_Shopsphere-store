@@ -279,31 +279,6 @@ button:disabled {
     padding: 13px 24px;
 }
 
-.home-account-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 14px;
-}
-
-.hero-content .account-button {
-    padding: 10px 18px;
-    background: var(--white);
-    color: var(--primary);
-    border: 1px solid var(--primary);
-}
-
-.hero-content .account-button:hover {
-    background: var(--primary-light);
-    color: var(--primary-dark);
-}
-
-.hero-content .account-button-secondary {
-    background: transparent;
-    color: var(--text);
-    border-color: var(--border);
-}
-
 .hero-image-placeholder {
     min-height: 300px;
     padding: 30px;
@@ -408,8 +383,9 @@ button:disabled {
     height: 180px;
     margin-bottom: 16px;
     border-radius: 9px;
-    background: #f1f5f9;
-    object-fit: contain;
+    background: #f8f6f3;
+    object-fit: cover;
+    object-position: center;
 }
 
 .product-card>div.product-image {
@@ -628,7 +604,6 @@ button:disabled {
 ========================================= */
 
 #checkoutForm,
-#otpLoginForm,
 #loginForm,
 #registerForm,
 #sellerProductForm {
@@ -650,7 +625,6 @@ button:disabled {
 }
 
 #checkoutForm label,
-#otpLoginForm label,
 #loginForm label,
 #registerForm label,
 #sellerProductForm label {
@@ -663,7 +637,6 @@ button:disabled {
 #checkoutForm input,
 #checkoutForm select,
 #checkoutForm textarea,
-#otpLoginForm input,
 #loginForm input,
 #registerForm input,
 #sellerProductForm input,
@@ -683,7 +656,6 @@ button:disabled {
 #checkoutForm input:focus,
 #checkoutForm select:focus,
 #checkoutForm textarea:focus,
-#otpLoginForm input:focus,
 #loginForm input:focus,
 #registerForm input:focus,
 #sellerProductForm input:focus,
@@ -699,8 +671,36 @@ button:disabled {
     resize: vertical;
 }
 
+.password-field {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.password-field input {
+    padding-right: 76px !important;
+}
+
+.password-field .password-toggle {
+    position: absolute;
+    right: 8px;
+    margin: 0;
+    padding: 5px 8px;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--primary);
+    font-size: 13px;
+    font-weight: 700;
+}
+
+.password-field .password-toggle:hover {
+    background: var(--primary-light);
+    color: var(--primary-dark);
+}
+
 #checkoutForm button,
-#otpLoginForm button,
 #loginForm button,
 #registerForm button,
 #sellerProductForm button {
@@ -1005,7 +1005,6 @@ button:disabled {
     }
 
     #checkoutForm,
-    #otpLoginForm,
     #loginForm,
     #registerForm,
     #sellerProductForm {
@@ -1110,15 +1109,18 @@ button:disabled {
     display: none !important;
 }
 
-.auth-locked #login,
-.auth-locked #register {
+.account-section {
     width: min(92%, 540px);
-    margin: 0 auto;
+    margin: 32px auto;
     padding: 36px;
     background: var(--white);
     border: 1px solid var(--border);
     border-radius: 18px;
     box-shadow: 0 18px 55px rgba(55, 40, 97, 0.13);
+}
+
+.account-section h1 {
+    margin-bottom: 12px;
 }
 
 .auth-locked #login {
@@ -1137,31 +1139,9 @@ button:disabled {
     display: block !important;
 }
 
-.auth-locked #login h1,
-.auth-locked #register h1 {
-    margin-bottom: 12px;
-}
-
-.otp-secondary-button {
-    background: var(--white);
-    color: var(--primary);
-    border: 1px solid var(--primary);
-}
-
-.password-login {
-    width: min(100%, 600px);
-    margin-top: 20px;
-}
-
-.password-login summary {
-    width: fit-content;
-    color: var(--primary);
-    font-weight: 700;
-    cursor: pointer;
-}
-
-.password-login #loginForm {
-    margin-top: 14px;
+.nav-actions [hidden],
+.footer-links [hidden] {
+    display: none !important;
 }
 
 .market-search button {
